@@ -1,0 +1,37 @@
+# ─── Rust / Tauri ──────────────────────────────────────────────────────────
+src-tauri/target/
+src-tauri/gen/
+src-tauri/gen/schemas
+
+# ─── Nuxt / Vite ─────────────────────────────────────────────────────────
+frontend/.nuxt/
+frontend/.output/
+frontend/.data/
+frontend/.nitro/
+frontend/.cache/
+frontend/node_modules/
+frontend/dist
+
+# ─── Playwright ──────────────────────────────────────────────────────────
+frontend/.playwright/
+frontend/test-results/
+.playwright/
+.playwright-cli/
+test-results/
+playwright-report/
+
+
+# ─── General ─────────────────────────────────────────────────────────────
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+
+# ─── IDE / OS ────────────────────────────────────────────────────────────
+.idea/
+.fleet/
+.vscode/
+*.swp
+*.swo
+*~
