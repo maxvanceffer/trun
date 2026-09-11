@@ -13,6 +13,10 @@ ApplicationWindow {
     // then visible — otherwise the system title bar sticks around)
     visible: false
     title: "trun"
+    // Frameless: the lib's tested path (its titled custom-frame mode
+    // could not release the 28pt titlebar on this system).
+    // Drag/resize/hit-test via WindowAgent below.
+    flags: Qt.FramelessWindowHint | Qt.Window
     // Transparent root: rounded backdrop below draws the window shape
     // (square content would poke out of AppKit's rounded frame).
     // The frame itself is owned by WindowAgent (qwindowkit), not the OS.
@@ -276,6 +280,22 @@ ApplicationWindow {
         onMcpConfigureRequested: mcpSetupDialog.openDialog()
         onAddCustomRequested: function(folderPath) {
             newCommandDialog.openCreate(folderPath)
+        }
+
+        // Own traffic lights (frameless window has no native ones):
+        // red hides to tray like closing, yellow minimizes, green maximizes.
+        onCloseRequested: {
+            if (!trayAvailable)
+                Qt.quit()
+            else
+                root.visible = false
+        }
+        onMinimizeRequested: root.showMinimized()
+        onMaximizeRequested: {
+            if (root.visibility === Window.Maximized)
+                root.showNormal()
+            else
+                root.showMaximized()
         }
     }
 

@@ -29,39 +29,29 @@ bool hideSystemTitleBar(QWindow *window)
     if (!nswindow)
         return false;
 
-    // Unified toolbar: content spans the full window. The TitleHidden
-    // styleMask bit (not just the titleVisibility property) is what
-    // actually releases the 28pt titlebar area.
-    nswindow.styleMask |= NSWindowStyleMaskFullSizeContentView | NSWindowTitleHidden;
-    nswindow.titlebarAppearsTransparent = YES;
-    nswindow.titleVisibility = NSWindowTitleHidden;
-    nswindow.movableByWindowBackground = NO;
-    nswindow.movable = YES;
-
-    // Sidebar vibrancy: glass behind Qt's scene, click-through.
+    // Sidebar vibrancy only: the window itself is frameless (no titlebar
+    // area exists at all). Glass sits behind Qt's scene, click-through.
     // Installed once; Qt content paints over it everywhere except
     // transparent regions (the sidebar strip).
     static char kVibrancyKey;
     if (!objc_getAssociatedObject(nswindow, &kVibrancyKey)) {
         NSView *container = [view superview];
-        if (container) {
-            [nswindow setOpaque:NO];
-            [nswindow setBackgroundColor:NSColor.clearColor];
-            TrunVibrancyView *effectView =
-                [[TrunVibrancyView alloc] initWithFrame:view.frame];
-            [effectView setMaterial:NSVisualEffectMaterialSidebar];
-            [effectView setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
-            [effectView setState:NSVisualEffectStateFollowsWindowActiveState];
-            [effectView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
-            [container addSubview:effectView positioned:NSWindowBelow relativeTo:view];
-            objc_setAssociatedObject(nswindow, &kVibrancyKey, effectView,
-                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
-            [effectView release];
+        if (!container) {
+            qWarning() << "[titlebar] no container for vibrancy";
+            return false;
         }
+        [nswindow setOpaque:NO];
+        [nswindow setBackgroundColor:NSColor.clearColor];
+        TrunVibrancyView *effectView =
+            [[TrunVibrancyView alloc] initWithFrame:view.frame];
+        [effectView setMaterial:NSVisualEffectMaterialSidebar];
+        [effectView setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
+        [effectView setState:NSVisualEffectStateFollowsWindowActiveState];
+        [effectView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+        [container addSubview:effectView positioned:NSWindowBelow relativeTo:view];
+        objc_setAssociatedObject(nswindow, &kVibrancyKey, effectView,
+                                 OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+        [effectView release];
     }
-
-    const NSRect layoutRect = [nswindow contentLayoutRect];
-    qWarning() << "[titlebar] applied, layoutY:" << layoutRect.origin.y
-               << "layoutH:" << layoutRect.size.height;
     return true;
 }
