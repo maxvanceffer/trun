@@ -1,7 +1,0 @@
-@import "tailwindcss";
-@import "@nuxt/ui";
-
-/* ⚠️ DO NOT add style overrides here without explicit permission.
-   Always prefer Nuxt UI :ui prop or component slots instead.
-   This file should remain minimal — only global resets, no component theming. */
-

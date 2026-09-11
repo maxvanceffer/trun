@@ -35,3 +35,9 @@ playwright-report/
 *.swp
 *.swo
 *~
+
+# ─── Qt / CMake ───
+build/
+.qt/
+*.user
+*.o

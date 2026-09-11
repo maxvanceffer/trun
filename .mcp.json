@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "lance": {
-      "type": "http",
-      "url": "https://api.lance.app/mcp"
-    }
-  }
-}
