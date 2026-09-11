@@ -27,10 +27,17 @@ Rectangle {
         return (projectService.activeProject.id || "") + "|" + cmdId
     }
 
-    // Controls inside the agent title-bar strip that must stay clickable
+    // Controls inside the agent title-bar strip that must stay clickable.
+    // Null-guarded: qwindowkit ASSERT-aborts the whole app on null.
     function markHitTest(agent) {
-        agent.setHitTestVisible(detailPage.backButton, true)
-        agent.setHitTestVisible(detailPage.projectLinkArea, true)
+        if (detailPage.backButton)
+            agent.setHitTestVisible(detailPage.backButton, true)
+        else
+            console.warn("markHitTest: backButton is null")
+        if (detailPage.projectLinkArea)
+            agent.setHitTestVisible(detailPage.projectLinkArea, true)
+        else
+            console.warn("markHitTest: projectLinkArea is null")
     }
 
     function appendCommandLine(cmdId, level, target, message) {

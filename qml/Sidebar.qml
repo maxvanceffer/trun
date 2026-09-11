@@ -274,11 +274,20 @@ Rectangle {
         }
     }
 
-    // Controls inside the agent title-bar strip that must stay clickable
+    // Controls inside the agent title-bar strip that must stay clickable.
+    // Null-guarded: qwindowkit ASSERT-aborts the whole app on null.
     function markHitTest(agent) {
-        agent.setHitTestVisible(rootFolderButton, true)
-        for (var i = 0; i < 3; ++i)
-            agent.setHitTestVisible(trafficLights.buttonAt(i), true)
+        if (rootFolderButton)
+            agent.setHitTestVisible(rootFolderButton, true)
+        else
+            console.warn("markHitTest: rootFolderButton is null")
+        for (var i = 0; i < 3; ++i) {
+            var b = trafficLights.buttonAt(i)
+            if (b)
+                agent.setHitTestVisible(b, true)
+            else
+                console.warn("markHitTest: traffic button " + i + " is null")
+        }
     }
 
     function setAllMcpEnabled(enabled) {        var agents = mcpAgents.scanAgents()
