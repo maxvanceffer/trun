@@ -6,9 +6,33 @@ ApplicationWindow {
     id: root
     width: 1200
     height: 800
+    minimumWidth: 900
+    minimumHeight: 600
     visible: projectService.projectCount > 0
     title: "trun"
-    color: Theme.windowBackground
+    // Phase 0 frameless spike: no system chrome, transparent root,
+    // rounded content container. Shadow/drag verified visually.
+    flags: Qt.FramelessWindowHint | Qt.Window
+    color: "transparent"
+
+    // Drag strip: system move via press-and-drag (macOS supported)
+    MouseArea {
+        id: dragStrip
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: 40
+        z: 0
+        hoverEnabled: false
+        acceptedButtons: Qt.LeftButton
+        onPressed: function(mouse) { root.startSystemMove() }
+        onDoubleClicked: {
+            if (root.visibility === Window.Maximized)
+                root.showNormal()
+            else
+                root.showMaximized()
+        }
+    }
 
     property string activeView: "dashboard"
 
@@ -237,6 +261,22 @@ ApplicationWindow {
         onMcpConfigureRequested: mcpSetupDialog.openDialog()
         onAddCustomRequested: function(folderPath) {
             newCommandDialog.openCreate(folderPath)
+        }
+
+        // Frameless traffic lights: red hides to tray (like closing),
+        // yellow minimizes, green toggles maximize.
+        onCloseRequested: {
+            if (!trayAvailable)
+                Qt.quit()
+            else
+                root.visible = false
+        }
+        onMinimizeRequested: root.showMinimized()
+        onMaximizeRequested: {
+            if (root.visibility === Window.Maximized)
+                root.showNormal()
+            else
+                root.showMaximized()
         }
     }
 

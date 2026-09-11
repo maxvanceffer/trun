@@ -13,6 +13,9 @@ Rectangle {
     signal projectSelected(string projectId)
     signal mcpConfigureRequested()
     signal addCustomRequested(string folderPath)
+    signal closeRequested()
+    signal minimizeRequested()
+    signal maximizeRequested()
 
     // Connect log messages
     Connections {
@@ -30,6 +33,16 @@ Rectangle {
         anchors.right: parent.right
         height: 48
         color: "transparent"
+
+        TrafficLights {
+            anchors.left: parent.left
+            anchors.leftMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            windowActive: Window.active
+            onCloseRequested: sidebar.closeRequested()
+            onMinimizeRequested: sidebar.minimizeRequested()
+            onMaximizeRequested: sidebar.maximizeRequested()
+        }
 
         Label {
             anchors.centerIn: parent
