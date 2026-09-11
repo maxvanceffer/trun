@@ -237,9 +237,11 @@ void QmlTests::test_sidebar_uses_theme()
     QScopedPointer<QObject> guard(obj);
 
     // Sidebar background must come from the Theme singleton
-    // (preset sidebar token, depends on the OS color scheme)
+    // (preset sidebar token, depends on the OS color scheme).
+    // On macOS the sidebar is transparent over the native glass blur.
     const QColor bg = obj->property("color").value<QColor>();
-    QVERIFY(bg == QColor("#fbfbf9") || bg == QColor("#1d1d16"));
+    QVERIFY(bg == QColor("#fbfbf9") || bg == QColor("#1d1d16")
+            || bg == QColor(0, 0, 0, 0));
     QCOMPARE(obj->property("radius").toInt(), 8);
 }
 

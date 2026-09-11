@@ -11,9 +11,14 @@ Row {
 
     property bool windowActive: true
 
+    function buttonAt(index) {
+        return repeater.itemAt(index)
+    }
+
     spacing: 8
 
     Repeater {
+        id: repeater
         model: [
             { color: "#FF5F57", glyph: "×", action: "close" },
             { color: "#FEBF2E", glyph: "–", action: "minimize" },

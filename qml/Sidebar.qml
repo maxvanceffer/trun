@@ -7,7 +7,8 @@ import QtQuick.Dialogs
 Rectangle {
     id: sidebar
     width: 240
-    color: Theme.sidebarBackground
+    // Glass on macOS: transparent over the native blur, solid elsewhere
+    color: Qt.platform.os === "osx" ? "transparent" : Theme.sidebarBackground
     radius: 8
 
     signal projectSelected(string projectId)
@@ -35,6 +36,7 @@ Rectangle {
         color: "transparent"
 
         TrafficLights {
+            id: trafficLights
             anchors.left: parent.left
             anchors.leftMargin: 12
             anchors.verticalCenter: parent.verticalCenter
@@ -273,8 +275,14 @@ Rectangle {
         }
     }
 
-    function setAllMcpEnabled(enabled) {
-        var agents = mcpAgents.scanAgents()
+    // Controls inside the agent title-bar strip that must stay clickable
+    function markHitTest(agent) {
+        agent.setHitTestVisible(rootFolderButton, true)
+        for (var i = 0; i < 3; ++i)
+            agent.setHitTestVisible(trafficLights.buttonAt(i), true)
+    }
+
+    function setAllMcpEnabled(enabled) {        var agents = mcpAgents.scanAgents()
         var changed = 0
         for (var i = 0; i < agents.length; ++i) {
             if (!agents[i].installed) {

@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import QWindowKit
 
 Window {
     id: wizardWindow
@@ -17,6 +18,23 @@ Window {
     signal projectConfigured(string folderPath)
 
     property url pendingFolder
+
+    WindowAgent {
+        id: wizardAgent
+    }
+
+    Item {
+        id: wizardTitleBar
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: 40
+    }
+
+    Component.onCompleted: {
+        wizardAgent.setup(wizardWindow)
+        wizardAgent.setTitleBar(wizardTitleBar)
+    }
 
     ColumnLayout {
         anchors.centerIn: parent

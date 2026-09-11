@@ -7,6 +7,13 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 QuickDialogs2 Core Qml Test Svg QuickTest Qml Widgets)
 qt_standard_project_setup()
 
+# Frameless window framework (Quick module only; no-op off macOS where unused)
+set(QWINDOWKIT_BUILD_WIDGETS OFF CACHE BOOL "" FORCE)
+set(QWINDOWKIT_BUILD_QUICK ON CACHE BOOL "" FORCE)
+set(QWINDOWKIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(QWINDOWKIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+add_subdirectory(third_party/qwindowkit)
+
 qt_add_executable(trun-app
     src/main.cpp
     src/projectservice.h
@@ -65,6 +72,7 @@ target_link_libraries(trun-app PRIVATE
     Qt6::Core
     Qt6::Svg
     Qt6::Widgets
+    QWindowKit::Quick
 )
 
 # =====================================================================

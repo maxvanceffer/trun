@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QWindowKit
 
 ApplicationWindow {
     id: root
@@ -10,27 +11,43 @@ ApplicationWindow {
     minimumHeight: 600
     visible: projectService.projectCount > 0
     title: "trun"
-    // Phase 0 frameless spike: no system chrome, transparent root,
-    // rounded content container. Shadow/drag verified visually.
-    flags: Qt.FramelessWindowHint | Qt.Window
+    // Transparent root: glass/blur shows through transparent regions.
+    // The frame itself is owned by WindowAgent (qwindowkit), not the OS.
     color: "transparent"
 
-    // Drag strip: system move via press-and-drag (macOS supported)
-    MouseArea {
-        id: dragStrip
+    WindowAgent {
+        id: windowAgent
+    }
+
+    // Drag title bar: full-width strip, agent drags natively.
+    // Interactive children are marked hit-test visible (see markHitTest).
+    Item {
+        id: titleBar
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        height: 40
-        z: 0
-        hoverEnabled: false
-        acceptedButtons: Qt.LeftButton
-        onPressed: function(mouse) { root.startSystemMove() }
-        onDoubleClicked: {
-            if (root.visibility === Window.Maximized)
-                root.showNormal()
-            else
-                root.showMaximized()
+        height: 48
+    }
+
+    Component.onCompleted: {
+        windowAgent.setup(root)
+        windowAgent.setTitleBar(titleBar)
+        if (Qt.platform.os === "osx")
+            applyMacBlur()
+        sidebar.markHitTest(windowAgent)
+        dashboardView.markHitTest(windowAgent)
+    }
+
+    // macOS backdrop blur behind transparent regions (sidebar)
+    function applyMacBlur() {
+        windowAgent.setWindowAttribute("blur-effect", Theme.isDark ? "dark" : "light")
+    }
+
+    Connections {
+        target: Theme
+        function onIsDarkChanged() {
+            if (Qt.platform.os === "osx")
+                root.applyMacBlur()
         }
     }
 

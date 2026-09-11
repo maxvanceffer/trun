@@ -234,6 +234,7 @@ Item {
             spacing: 8
 
             IconButton {
+                id: backButton
                 anchors.verticalCenter: parent.verticalCenter
                 iconSource: iconBaseUrl + (Theme.isDark ? "chevron-down-dark.png" : "chevron-down.png")
                 rotation: 90
@@ -248,6 +249,7 @@ Item {
                 font.pixelSize: 13
 
                 MouseArea {
+                    id: projectLinkArea
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor

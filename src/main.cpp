@@ -16,9 +16,12 @@
 #include "settings.h"
 #include "mcpserver.h"
 #include "mcpagents.h"
+#include <QWKQuick/qwkquickglobal.h>
 
 int main(int argc, char *argv[])
 {
+    // Required for window transparency / blur effects
+    QQuickWindow::setDefaultAlphaBuffer(true);
     // Headless MCP server: no GUI, no tray, no QML engine.
     for (int i = 1; i < argc; ++i) {
         if (QString::fromUtf8(argv[i]) == QStringLiteral("--mcp")) {
@@ -53,6 +56,7 @@ int main(int argc, char *argv[])
 
     qmlRegisterType<QmlTreeItem>("Trun.Models", 1, 0, "QmlTreeItem");
     qmlRegisterType<QmlTreeModel>("Trun.Models", 1, 0, "QmlTreeModel");
+    QWK::registerTypes(&engine);
 
     static Settings *settings = new Settings();
     static auto logModel = new LogModel();

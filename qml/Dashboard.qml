@@ -27,6 +27,12 @@ Rectangle {
         return (projectService.activeProject.id || "") + "|" + cmdId
     }
 
+    // Controls inside the agent title-bar strip that must stay clickable
+    function markHitTest(agent) {
+        agent.setHitTestVisible(detailPage.backButton, true)
+        agent.setHitTestVisible(detailPage.projectLinkArea, true)
+    }
+
     function appendCommandLine(cmdId, level, target, message) {
         cmdId = fullKey(cmdId)
         var histories = commandHistories
