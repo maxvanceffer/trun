@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
 project(trun VERSION 0.1.0 LANGUAGES CXX)
 
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
+
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
@@ -31,6 +35,7 @@ qt_add_executable(trun-app
     src/mcpserver.cpp
     src/mcpagents.h
     src/mcpagents.cpp
+    src/mactitlebar.h
 )
 
 # Add QML resources via qml module
@@ -73,6 +78,11 @@ target_link_libraries(trun-app PRIVATE
     Qt6::Widgets
     QWindowKit::Quick
 )
+
+if(APPLE)
+    target_sources(trun-app PRIVATE src/mactitlebar.mm)
+    target_link_libraries(trun-app PRIVATE "-framework AppKit")
+endif()
 
 # =====================================================================
 # QML Integration Tests (C++ harness loading QML components)

@@ -31,7 +31,8 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
-        windowAgent.setup(root)
+        var agentOk = windowAgent.setup(root)
+        console.log("qwindowkit setup:", agentOk)
         windowAgent.setTitleBar(titleBar)
         // NOTE: blur-effect/glass attributes crash on startup
         // (qwindowkit ASSERT in findBlurEffectView) — disabled until

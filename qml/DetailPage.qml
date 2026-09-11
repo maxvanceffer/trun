@@ -25,6 +25,11 @@ Item {
     signal backRequested()
     signal clearRequested()
 
+    // Ids are file-scoped: expose title-bar controls for hit-testing
+    function hitTestControls() {
+        return [backButton, projectLinkArea]
+    }
+
     readonly property var command: {
         var cmds = projectService.activeProjectCommands
         for (var i = 0; i < cmds.length; ++i) {

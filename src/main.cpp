@@ -16,7 +16,9 @@
 #include "settings.h"
 #include "mcpserver.h"
 #include "mcpagents.h"
+#include "mactitlebar.h"
 #include <QWKQuick/qwkquickglobal.h>
+#include <QTimer>
 
 int main(int argc, char *argv[])
 {
@@ -145,6 +147,13 @@ int main(int argc, char *argv[])
     }
 
     QObject *rootObj = engine.rootObjects().first();
+
+    // Unified toolbar: content extends under the traffic lights.
+    // Deferred past show so the native handle exists.
+    QTimer::singleShot(0, [rootObj]() {
+        if (auto *window = qobject_cast<QQuickWindow*>(rootObj))
+            hideSystemTitleBar(window);
+    });
 
     // System tray: closing the window hides it, Quit lives in the tray menu.
     // Leaked intentionally for the app lifetime.
