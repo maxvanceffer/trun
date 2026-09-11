@@ -1,9 +1,21 @@
 #import <Cocoa/Cocoa.h>
+#import <objc/runtime.h>
 
 #include "mactitlebar.h"
 
 #include <QWindow>
 #include <QDebug>
+
+// Click-through vibrancy view: shows the blur but never steals mouse events
+@interface TrunVibrancyView : NSVisualEffectView
+@end
+
+@implementation TrunVibrancyView
+- (NSView *)hitTest:(NSPoint)point
+{
+    return nil;
+}
+@end
 
 bool hideSystemTitleBar(QWindow *window)
 {
@@ -11,33 +23,45 @@ bool hideSystemTitleBar(QWindow *window)
         return false;
     // Native handle may not exist before the first show
     NSView *view = (__bridge NSView *)reinterpret_cast<void *>(window->winId());
-    if (!view) {
-        qWarning() << "[titlebar] no native view yet";
+    if (!view)
         return false;
-    }
     NSWindow *nswindow = [view window];
-    if (!nswindow) {
-        qWarning() << "[titlebar] no NSWindow yet";
+    if (!nswindow)
         return false;
-    }
-    // Untitled window: no titlebar area at all, so AppKit cannot reserve
-    // 28pt for it and contentLayoutRect spans the full window.
-    // (FullSizeContentView + transparent titlebar alone did not release it.)
-    // Native traffic lights go away with the title — trun draws its own.
-    nswindow.styleMask &= ~NSWindowStyleMaskTitled;
-    nswindow.styleMask |= NSWindowStyleMaskFullSizeContentView;
+
+    // Unified toolbar: content spans the full window. The TitleHidden
+    // styleMask bit (not just the titleVisibility property) is what
+    // actually releases the 28pt titlebar area.
+    nswindow.styleMask |= NSWindowStyleMaskFullSizeContentView | NSWindowTitleHidden;
     nswindow.titlebarAppearsTransparent = YES;
     nswindow.titleVisibility = NSWindowTitleHidden;
     nswindow.movableByWindowBackground = NO;
     nswindow.movable = YES;
+
+    // Sidebar vibrancy: glass behind Qt's scene, click-through.
+    // Installed once; Qt content paints over it everywhere except
+    // transparent regions (the sidebar strip).
+    static char kVibrancyKey;
+    if (!objc_getAssociatedObject(nswindow, &kVibrancyKey)) {
+        NSView *container = [view superview];
+        if (container) {
+            [nswindow setOpaque:NO];
+            [nswindow setBackgroundColor:NSColor.clearColor];
+            TrunVibrancyView *effectView =
+                [[TrunVibrancyView alloc] initWithFrame:view.frame];
+            [effectView setMaterial:NSVisualEffectMaterialSidebar];
+            [effectView setBlendingMode:NSVisualEffectBlendingModeBehindWindow];
+            [effectView setState:NSVisualEffectStateFollowsWindowActiveState];
+            [effectView setAutoresizingMask:NSViewWidthSizable | NSViewHeightSizable];
+            [container addSubview:effectView positioned:NSWindowBelow relativeTo:view];
+            objc_setAssociatedObject(nswindow, &kVibrancyKey, effectView,
+                                     OBJC_ASSOCIATION_RETAIN_NONATOMIC);
+            [effectView release];
+        }
+    }
+
     const NSRect layoutRect = [nswindow contentLayoutRect];
-    const NSRect viewBounds = [view bounds];
-    const NSRect windowFrame = [nswindow frame];
-    qWarning() << "[titlebar] applied, fullSize:"
-               << ((nswindow.styleMask & NSWindowStyleMaskFullSizeContentView) != 0)
-               << "transparent:" << nswindow.titlebarAppearsTransparent
-               << "mask:" << (unsigned long)nswindow.styleMask
-               << "layoutY:" << layoutRect.origin.y << "layoutH:" << layoutRect.size.height
-               << "viewH:" << viewBounds.size.height << "frameH:" << windowFrame.size.height;
+    qWarning() << "[titlebar] applied, layoutY:" << layoutRect.origin.y
+               << "layoutH:" << layoutRect.size.height;
     return true;
 }

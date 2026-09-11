@@ -58,7 +58,6 @@ qt_add_qml_module(trun-app
         qml/ProgressRing.qml
         qml/RunConfigDialog.qml
         qml/McpSetupDialog.qml
-        qml/TrafficLights.qml
     RESOURCES
         qml.qrc
 )
