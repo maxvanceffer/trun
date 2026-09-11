@@ -11,9 +11,10 @@ ApplicationWindow {
     minimumHeight: 600
     visible: projectService.projectCount > 0
     title: "trun"
-    // Transparent root: glass/blur shows through transparent regions.
+    // Opaque root in sidebar tint: transparent sidebar melts into it,
+    // content panel sits distinct on the right with a left shadow.
     // The frame itself is owned by WindowAgent (qwindowkit), not the OS.
-    color: "transparent"
+    color: Theme.sidebarBackground
 
     WindowAgent {
         id: windowAgent
@@ -248,11 +249,8 @@ ApplicationWindow {
     Sidebar {
         id: sidebar
         anchors.top: parent.top
-        anchors.topMargin: 8
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 8
         anchors.left: parent.left
-        anchors.leftMargin: 8
         width: 240
 
         // Real signal handler: the delegate emits sidebar.projectSelected,
@@ -266,22 +264,6 @@ ApplicationWindow {
         onMcpConfigureRequested: mcpSetupDialog.openDialog()
         onAddCustomRequested: function(folderPath) {
             newCommandDialog.openCreate(folderPath)
-        }
-
-        // Frameless traffic lights: red hides to tray (like closing),
-        // yellow minimizes, green toggles maximize.
-        onCloseRequested: {
-            if (!trayAvailable)
-                Qt.quit()
-            else
-                root.visible = false
-        }
-        onMinimizeRequested: root.showMinimized()
-        onMaximizeRequested: {
-            if (root.visibility === Window.Maximized)
-                root.showNormal()
-            else
-                root.showMaximized()
         }
     }
 
@@ -309,18 +291,26 @@ ApplicationWindow {
 
     Item {
         anchors.top: parent.top
-        anchors.topMargin: 8
         anchors.bottom: parent.bottom
-        anchors.bottomMargin: 8
         anchors.left: sidebar.right
-        anchors.leftMargin: 8
         anchors.right: parent.right
-        anchors.rightMargin: 8
 
         Rectangle {
             anchors.fill: parent
             color: Theme.windowBackground
-            radius: 8
+        }
+
+        // Soft divider shadow on the content's left edge
+        Rectangle {
+            anchors.top: parent.top
+            anchors.bottom: parent.bottom
+            anchors.left: parent.left
+            width: 12
+            gradient: Gradient {
+                orientation: Gradient.Horizontal
+                GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.2) }
+                GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0) }
+            }
         }
 
         Dashboard {

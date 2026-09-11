@@ -7,15 +7,13 @@ import QtQuick.Dialogs
 Rectangle {
     id: sidebar
     width: 240
-    color: Theme.sidebarBackground
-    radius: 8
+    // Flat: no background of its own, melts into the root tint.
+    // (Native OS traffic lights sit top-left; nothing custom here.)
+    color: "transparent"
 
     signal projectSelected(string projectId)
     signal mcpConfigureRequested()
     signal addCustomRequested(string folderPath)
-    signal closeRequested()
-    signal minimizeRequested()
-    signal maximizeRequested()
 
     // Connect log messages
     Connections {
@@ -33,17 +31,6 @@ Rectangle {
         anchors.right: parent.right
         height: 48
         color: "transparent"
-
-        TrafficLights {
-            id: trafficLights
-            anchors.left: parent.left
-            anchors.leftMargin: 12
-            anchors.verticalCenter: parent.verticalCenter
-            windowActive: Window.active
-            onCloseRequested: sidebar.closeRequested()
-            onMinimizeRequested: sidebar.minimizeRequested()
-            onMaximizeRequested: sidebar.maximizeRequested()
-        }
 
         Label {
             anchors.centerIn: parent
@@ -281,13 +268,6 @@ Rectangle {
             agent.setHitTestVisible(rootFolderButton, true)
         else
             console.warn("markHitTest: rootFolderButton is null")
-        for (var i = 0; i < 3; ++i) {
-            var b = trafficLights.buttonAt(i)
-            if (b)
-                agent.setHitTestVisible(b, true)
-            else
-                console.warn("markHitTest: traffic button " + i + " is null")
-        }
     }
 
     function setAllMcpEnabled(enabled) {        var agents = mcpAgents.scanAgents()
