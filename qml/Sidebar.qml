@@ -14,6 +14,9 @@ Rectangle {
     signal projectSelected(string projectId)
     signal mcpConfigureRequested()
     signal addCustomRequested(string folderPath)
+    signal closeRequested()
+    signal minimizeRequested()
+    signal maximizeRequested()
 
     // Connect log messages
     Connections {
@@ -31,6 +34,18 @@ Rectangle {
         anchors.right: parent.right
         height: 48
         color: "transparent"
+
+        // Own traffic lights: untitled windows have no native ones.
+        TrafficLights {
+            id: trafficLights
+            anchors.left: parent.left
+            anchors.leftMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            windowActive: Window.active
+            onCloseRequested: sidebar.closeRequested()
+            onMinimizeRequested: sidebar.minimizeRequested()
+            onMaximizeRequested: sidebar.maximizeRequested()
+        }
 
         Label {
             anchors.centerIn: parent
@@ -268,6 +283,13 @@ Rectangle {
             agent.setHitTestVisible(rootFolderButton, true)
         else
             console.warn("markHitTest: rootFolderButton is null")
+        for (var i = 0; i < 3; ++i) {
+            var b = trafficLights.buttonAt(i)
+            if (b)
+                agent.setHitTestVisible(b, true)
+            else
+                console.warn("markHitTest: traffic button " + i + " is null")
+        }
     }
 
     function setAllMcpEnabled(enabled) {        var agents = mcpAgents.scanAgents()

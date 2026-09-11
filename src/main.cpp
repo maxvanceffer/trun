@@ -149,11 +149,27 @@ int main(int argc, char *argv[])
     QObject *rootObj = engine.rootObjects().first();
 
     // Unified toolbar: content extends under the traffic lights.
-    // Deferred past show so the native handle exists.
-    QTimer::singleShot(0, [rootObj]() {
-        if (auto *window = qobject_cast<QQuickWindow*>(rootObj))
-            hideSystemTitleBar(window);
+    // The native handle appears on first show — retry until it sticks,
+    // then keep verifying: something may revert the flags afterwards.
+    auto *titlebarTries = new int(0);
+    auto *titlebarTimer = new QTimer();
+    QObject::connect(titlebarTimer, &QTimer::timeout, [rootObj, titlebarTries, titlebarTimer]() {
+        auto *window = qobject_cast<QQuickWindow*>(rootObj);
+        if (window && hideSystemTitleBar(window)) {
+            if (++(*titlebarTries) >= 15) { // ~3s of watch, then stop
+                titlebarTimer->stop();
+                titlebarTimer->deleteLater();
+                delete titlebarTries;
+            }
+            return;
+        }
+        if (++(*titlebarTries) >= 25) { // ~5s, then give up quietly
+            titlebarTimer->stop();
+            titlebarTimer->deleteLater();
+            delete titlebarTries;
+        }
     });
+    titlebarTimer->start(200);
 
     // System tray: closing the window hides it, Quit lives in the tray menu.
     // Leaked intentionally for the app lifetime.

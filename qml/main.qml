@@ -9,7 +9,9 @@ ApplicationWindow {
     height: 800
     minimumWidth: 900
     minimumHeight: 600
-    visible: projectService.projectCount > 0
+    // Shown after agent setup (qwindowkit tutorial order: setup first,
+    // then visible — otherwise the system title bar sticks around)
+    visible: false
     title: "trun"
     // Opaque root in sidebar tint: transparent sidebar melts into it,
     // content panel sits distinct on the right with a left shadow.
@@ -39,6 +41,7 @@ ApplicationWindow {
         // the injection path is fixed upstream. Sidebar stays solid.
         sidebar.markHitTest(windowAgent)
         dashboardView.markHitTest(windowAgent)
+        root.visible = projectService.projectCount > 0
     }
 
     property string activeView: "dashboard"
@@ -265,6 +268,22 @@ ApplicationWindow {
         onMcpConfigureRequested: mcpSetupDialog.openDialog()
         onAddCustomRequested: function(folderPath) {
             newCommandDialog.openCreate(folderPath)
+        }
+
+        // Own traffic lights (untitled window has no native ones):
+        // red hides to tray like closing, yellow minimizes, green maximizes.
+        onCloseRequested: {
+            if (!trayAvailable)
+                Qt.quit()
+            else
+                root.visible = false
+        }
+        onMinimizeRequested: root.showMinimized()
+        onMaximizeRequested: {
+            if (root.visibility === Window.Maximized)
+                root.showNormal()
+            else
+                root.showMaximized()
         }
     }
 

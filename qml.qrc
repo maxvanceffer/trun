@@ -15,6 +15,7 @@
         <file>qml/ProgressRing.qml</file>
         <file>qml/RunConfigDialog.qml</file>
         <file>qml/McpSetupDialog.qml</file>
+        <file>qml/TrafficLights.qml</file>
     </qresource>
     <qresource prefix="/icons">
         <file>assets/icons/cmake-32px.png</file>
