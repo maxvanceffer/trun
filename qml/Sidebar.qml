@@ -7,8 +7,7 @@ import QtQuick.Dialogs
 Rectangle {
     id: sidebar
     width: 240
-    // Glass on macOS: transparent over the native blur, solid elsewhere
-    color: Qt.platform.os === "osx" ? "transparent" : Theme.sidebarBackground
+    color: Theme.sidebarBackground
     radius: 8
 
     signal projectSelected(string projectId)

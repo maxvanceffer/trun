@@ -32,23 +32,11 @@ ApplicationWindow {
     Component.onCompleted: {
         windowAgent.setup(root)
         windowAgent.setTitleBar(titleBar)
-        if (Qt.platform.os === "osx")
-            applyMacBlur()
+        // NOTE: blur-effect/glass attributes crash on startup
+        // (qwindowkit ASSERT in findBlurEffectView) — disabled until
+        // the injection path is fixed upstream. Sidebar stays solid.
         sidebar.markHitTest(windowAgent)
         dashboardView.markHitTest(windowAgent)
-    }
-
-    // macOS backdrop blur behind transparent regions (sidebar)
-    function applyMacBlur() {
-        windowAgent.setWindowAttribute("blur-effect", Theme.isDark ? "dark" : "light")
-    }
-
-    Connections {
-        target: Theme
-        function onIsDarkChanged() {
-            if (Qt.platform.os === "osx")
-                root.applyMacBlur()
-        }
     }
 
     property string activeView: "dashboard"
