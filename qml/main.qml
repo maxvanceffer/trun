@@ -13,10 +13,9 @@ ApplicationWindow {
     // then visible — otherwise the system title bar sticks around)
     visible: false
     title: "trun"
-    // Frameless: the lib's tested path (its titled custom-frame mode
-    // could not release the 28pt titlebar on this system).
-    // Drag/resize/hit-test via WindowAgent below.
-    flags: Qt.FramelessWindowHint | Qt.Window
+    // Native unified toolbar (iDescriptor recipe): Qt negotiates
+    // full-size content with AppKit itself. No FramelessWindowHint.
+    flags: Qt.Window | Qt.NoTitleBarBackgroundHint | Qt.ExpandedClientAreaHint
     // Transparent root: rounded backdrop below draws the window shape
     // (square content would poke out of AppKit's rounded frame).
     // The frame itself is owned by WindowAgent (qwindowkit), not the OS.
@@ -45,15 +44,14 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
-        var agentOk = windowAgent.setup(root)
-        console.log("qwindowkit setup:", agentOk)
-        windowAgent.setTitleBar(titleBar)
-        // NOTE: blur-effect/glass attributes crash on startup
-        // (qwindowkit ASSERT in findBlurEffectView) — disabled until
-        // the injection path is fixed upstream. Sidebar stays solid.
-        sidebar.markHitTest(windowAgent)
-        dashboardView.markHitTest(windowAgent)
-        root.visible = projectService.projectCount > 0
+        Qt.callLater(function() {
+            var agentOk = windowAgent.setup(root)
+            console.log("qwindowkit setup:", agentOk)
+            windowAgent.setTitleBar(titleBar)
+            sidebar.markHitTest(windowAgent)
+            dashboardView.markHitTest(windowAgent)
+            root.visible = projectService.projectCount > 0
+        })
     }
 
     property string activeView: "dashboard"
@@ -280,22 +278,6 @@ ApplicationWindow {
         onMcpConfigureRequested: mcpSetupDialog.openDialog()
         onAddCustomRequested: function(folderPath) {
             newCommandDialog.openCreate(folderPath)
-        }
-
-        // Own traffic lights (frameless window has no native ones):
-        // red hides to tray like closing, yellow minimizes, green maximizes.
-        onCloseRequested: {
-            if (!trayAvailable)
-                Qt.quit()
-            else
-                root.visible = false
-        }
-        onMinimizeRequested: root.showMinimized()
-        onMaximizeRequested: {
-            if (root.visibility === Window.Maximized)
-                root.showNormal()
-            else
-                root.showMaximized()
         }
     }
 
