@@ -11,6 +11,61 @@ Rectangle {
     // (Native OS traffic lights sit top-left; nothing custom here.)
     color: "transparent"
 
+    // Square when maximized, rounded outer corners otherwise
+    readonly property int cornerR: (Window.visibility === Window.Maximized
+                                    || Window.visibility === Window.FullScreen) ? 0 : 10
+
+    // Two-tone rounded backdrop: middle band + corner pieces.
+    // Each outer corner = content-tone square with a sidebar-tone
+    // circle over it, leaving a clean rounded notch.
+    Rectangle {
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.top: parent.top
+        anchors.topMargin: cornerR
+        anchors.bottom: parent.bottom
+        anchors.bottomMargin: cornerR
+        color: Theme.sidebarBackground
+    }
+
+    Rectangle {
+        x: 0
+        y: 0
+        width: cornerR
+        height: cornerR
+        color: Theme.windowBackground
+        visible: cornerR > 0
+    }
+
+    Rectangle {
+        x: 0
+        y: 0
+        width: cornerR * 2
+        height: cornerR * 2
+        radius: cornerR
+        color: Theme.sidebarBackground
+        visible: cornerR > 0
+    }
+
+    Rectangle {
+        x: 0
+        y: parent.height - cornerR
+        width: cornerR
+        height: cornerR
+        color: Theme.windowBackground
+        visible: cornerR > 0
+    }
+
+    Rectangle {
+        x: 0
+        y: parent.height - cornerR * 2
+        width: cornerR * 2
+        height: cornerR * 2
+        radius: cornerR
+        color: Theme.sidebarBackground
+        visible: cornerR > 0
+    }
+
     signal projectSelected(string projectId)
     signal mcpConfigureRequested()
     signal addCustomRequested(string folderPath)

@@ -13,10 +13,18 @@ ApplicationWindow {
     // then visible — otherwise the system title bar sticks around)
     visible: false
     title: "trun"
-    // Opaque root in sidebar tint: transparent sidebar melts into it,
-    // content panel sits distinct on the right with a left shadow.
+    // Transparent root: rounded backdrop below draws the window shape
+    // (square content would poke out of AppKit's rounded frame).
     // The frame itself is owned by WindowAgent (qwindowkit), not the OS.
-    color: Theme.sidebarBackground
+    color: "transparent"
+
+    // Window backdrop: content tone, rounded unless maximized
+    Rectangle {
+        anchors.fill: parent
+        radius: (Window.visibility === Window.Maximized
+                 || Window.visibility === Window.FullScreen) ? 0 : 10
+        color: Theme.windowBackground
+    }
 
     WindowAgent {
         id: windowAgent
@@ -314,11 +322,6 @@ ApplicationWindow {
         anchors.bottom: parent.bottom
         anchors.left: sidebar.right
         anchors.right: parent.right
-
-        Rectangle {
-            anchors.fill: parent
-            color: Theme.windowBackground
-        }
 
         // Soft divider shadow on the content's left edge
         Rectangle {
