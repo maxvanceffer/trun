@@ -29,6 +29,12 @@ bool hideSystemTitleBar(QWindow *window)
     if (!nswindow)
         return false;
 
+    // Untitled window: no titlebar area can exist at all (proven in PoC).
+    // Native traffic lights go away — trun draws its own.
+    // (FullSizeContentView + transparent titlebar alone did not release
+    // the 28pt layout on this system.)
+    nswindow.styleMask &= ~NSWindowStyleMaskTitled;
+
     // Sidebar vibrancy only: the window itself is frameless (no titlebar
     // area exists at all). Glass sits behind Qt's scene, click-through.
     // Installed once; Qt content paints over it everywhere except

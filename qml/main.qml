@@ -275,6 +275,22 @@ ApplicationWindow {
         onAddCustomRequested: function(folderPath) {
             newCommandDialog.openCreate(folderPath)
         }
+
+        // Own traffic lights (untitled window has no native ones):
+        // red hides to tray like closing, yellow minimizes, green maximizes.
+        onCloseRequested: {
+            if (!trayAvailable)
+                Qt.quit()
+            else
+                root.visible = false
+        }
+        onMinimizeRequested: root.showMinimized()
+        onMaximizeRequested: {
+            if (root.visibility === Window.Maximized)
+                root.showNormal()
+            else
+                root.showMaximized()
+        }
     }
 
     McpSetupDialog {
