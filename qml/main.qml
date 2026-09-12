@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
-import QWindowKit
 
 ApplicationWindow {
     id: root
@@ -9,16 +8,14 @@ ApplicationWindow {
     height: 800
     minimumWidth: 900
     minimumHeight: 600
-    // Shown after agent setup (qwindowkit tutorial order: setup first,
-    // then visible — otherwise the system title bar sticks around)
+    // Shown deferred (native expanded-area setup first, iDescriptor order)
     visible: false
     title: "trun"
     // Native unified toolbar (iDescriptor recipe): Qt negotiates
-    // full-size content with AppKit itself. No FramelessWindowHint.
+    // full-size content with AppKit itself. No FramelessWindowHint,
+    // no frame agent — both fought the native path.
     flags: Qt.Window | Qt.NoTitleBarBackgroundHint | Qt.ExpandedClientAreaHint
-    // Transparent root: rounded backdrop below draws the window shape
-    // (square content would poke out of AppKit's rounded frame).
-    // The frame itself is owned by WindowAgent (qwindowkit), not the OS.
+    // Transparent root: rounded backdrop below draws the window shape.
     color: "transparent"
 
     // Window backdrop: content tone, rounded unless maximized
@@ -29,27 +26,26 @@ ApplicationWindow {
         color: Theme.windowBackground
     }
 
-    WindowAgent {
-        id: windowAgent
-    }
-
-    // Drag title bar: full-width strip, agent drags natively.
-    // Interactive children are marked hit-test visible (see markHitTest).
-    Item {
-        id: titleBar
+    // Drag strip (iDescriptor pattern): declared first (bottom of z),
+    // buttons and rows above keep their clicks, empty areas drag.
+    MouseArea {
+        id: dragStrip
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
         height: 48
+        acceptedButtons: Qt.LeftButton
+        onPressed: function(mouse) { root.startSystemMove() }
+        onDoubleClicked: {
+            if (root.visibility === Window.Maximized)
+                root.showNormal()
+            else
+                root.showMaximized()
+        }
     }
 
     Component.onCompleted: {
         Qt.callLater(function() {
-            var agentOk = windowAgent.setup(root)
-            console.log("qwindowkit setup:", agentOk)
-            windowAgent.setTitleBar(titleBar)
-            sidebar.markHitTest(windowAgent)
-            dashboardView.markHitTest(windowAgent)
             root.visible = projectService.projectCount > 0
         })
     }

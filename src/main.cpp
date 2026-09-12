@@ -17,7 +17,6 @@
 #include "mcpserver.h"
 #include "mcpagents.h"
 #include "mactitlebar.h"
-#include <QWKQuick/qwkquickglobal.h>
 #include <QTimer>
 
 int main(int argc, char *argv[])
@@ -58,7 +57,6 @@ int main(int argc, char *argv[])
 
     qmlRegisterType<QmlTreeItem>("Trun.Models", 1, 0, "QmlTreeItem");
     qmlRegisterType<QmlTreeModel>("Trun.Models", 1, 0, "QmlTreeModel");
-    QWK::registerTypes(&engine);
 
     static Settings *settings = new Settings();
     static auto logModel = new LogModel();
