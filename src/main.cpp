@@ -171,7 +171,7 @@ int main(int argc, char *argv[])
     // Leaked intentionally for the app lifetime.
     if (QSystemTrayIcon::isSystemTrayAvailable()) {
         auto *tray = new QSystemTrayIcon(&app);
-        QIcon trayIcon(iconsPath + "/terminal-dark-32px.png");
+        QIcon trayIcon(iconsPath + "/tray-template.png");
         trayIcon.setIsMask(true); // macOS: adapt the glyph to menu bar theme
         tray->setIcon(trayIcon);
         tray->setToolTip("trun");

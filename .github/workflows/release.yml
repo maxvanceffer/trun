@@ -79,11 +79,22 @@ jobs:
       - name: Pack .zip (for the future in-app updater)
         run: ditto -c -k --keepParent dist/trun-app.app 'trun-${{ steps.ver.outputs.version }}-macos-arm64.zip'
 
-      - name: Pack .dmg (manual install)
-        run: >
-          hdiutil create -volname 'trun ${{ steps.ver.outputs.version }}'
-          -srcfolder dist/trun-app.app -ov -format UDZO
-          'trun-${{ steps.ver.outputs.version }}-macos-arm64.dmg'
+      - name: Pack .dmg (Finder background + drag-to-Applications)
+        # dist/ holds only trun-app.app (QWINDOWKIT_INSTALL=OFF in CMakeLists).
+        # Icon layout matches assets/dmg design: trun at (160,214),
+        # Applications link at (480,214), window 640x400.
+        # NOTE: create-dmg 1.x ignores the @2x background sibling, the 1x
+        # assets/dmg/dmg-background.png is used (assets/dmg/dmg-background@2x.png
+        # is kept for a future manual .DS_Store flow).
+        run: |
+          brew install create-dmg
+          create-dmg --volname 'trun ${{ steps.ver.outputs.version }}' \
+            --background 'assets/dmg/dmg-background.png' \
+            --window-pos 200 120 --window-size 640 400 \
+            --icon-size 128 --icon 'trun-app.app' 160 214 \
+            --hide-extension 'trun-app.app' \
+            --app-drop-link 480 214 \
+            'trun-${{ steps.ver.outputs.version }}-macos-arm64.dmg' dist/
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/')

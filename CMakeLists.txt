@@ -22,6 +22,7 @@ set(QWINDOWKIT_BUILD_WIDGETS OFF CACHE BOOL "" FORCE)
 set(QWINDOWKIT_BUILD_QUICK ON CACHE BOOL "" FORCE)
 set(QWINDOWKIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(QWINDOWKIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(QWINDOWKIT_INSTALL OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/qwindowkit)
 
 qt_add_executable(trun-app MACOSX_BUNDLE
@@ -115,7 +116,13 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_NAME "trun"
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+        MACOSX_BUNDLE_ICON_FILE "trun"
     )
+    # Dock/Finder icon: assets/icons/trun.icns -> Contents/Resources.
+    set(APP_ICON_MACOS "${CMAKE_SOURCE_DIR}/assets/icons/trun.icns")
+    set_source_files_properties(${APP_ICON_MACOS} PROPERTIES
+        MACOSX_PACKAGE_LOCATION "Resources")
+    target_sources(trun-app PRIVATE ${APP_ICON_MACOS})
     # main.cpp loads QML/icons from files next to the binary
     # (exePath + "/qml/main.qml", exePath + "/icons"), so ship them in the bundle.
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/qml"
