@@ -30,6 +30,7 @@ Rectangle {
     signal databasesRequested()
     signal dockerRequested()
     signal mcpConfigureRequested()
+    signal updateCheckRequested()
     signal addCustomRequested(string folderPath)
     signal closeRequested()
     signal minimizeRequested()
@@ -319,6 +320,17 @@ Rectangle {
             tooltipText: qsTr("MCP servers")
             suppressTooltip: mcpMenu.visible
             onClicked: mcpMenu.visible = !mcpMenu.visible
+        }
+
+        IconButton {
+            id: updateButton
+            objectName: "updateButton"
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            iconSource: iconBaseUrl + (Theme.isDark ? "cog-dark.png" : "cog.png")
+            tooltipText: updater.updateAvailable ? qsTr("Update available") : qsTr("Check for updates")
+            active: updater.updateAvailable
+            onClicked: sidebar.updateCheckRequested()
         }
     }
 

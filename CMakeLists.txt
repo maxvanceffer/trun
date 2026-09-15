@@ -13,7 +13,7 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 QuickDialogs2 Core Qml Test Svg QuickTest Qml Widgets)
+find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 QuickDialogs2 Core Qml Test Svg QuickTest Qml Widgets Network)
 qt_standard_project_setup()
 
 # Frameless window framework (Quick module only; no-op off macOS where unused)
@@ -47,6 +47,8 @@ qt_add_executable(trun-app MACOSX_BUNDLE
     src/databaseservice.cpp
     src/dockerservice.h
     src/dockerservice.cpp
+    src/updater.h
+    src/updater.cpp
     src/mactitlebar.h
 )
 
@@ -70,21 +72,28 @@ qt_add_qml_module(trun-app
         qml/ProgressRing.qml
         qml/RunConfigDialog.qml
         qml/McpSetupDialog.qml
+        qml/UpdateDialog.qml
         qml/TrafficLights.qml
         qml/DatabasesPage.qml
         qml/DockerPage.qml
-        qml/BusyLabel.qml
-        qml/Spinner.qml
     RESOURCES
         qml.qrc
 )
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
-# Copy QML files and icons to build directory (for development)
+# Copy QML files and icons next to the binary (for development).
+# With MACOSX_BUNDLE that is Contents/MacOS, mirroring the release layout.
 file(COPY ${CMAKE_SOURCE_DIR}/qml DESTINATION ${CMAKE_BINARY_DIR})
-add_custom_command(TARGET trun-app POST_BUILD
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets/icons ${CMAKE_BINARY_DIR}/icons
-)
+if(APPLE)
+    add_custom_command(TARGET trun-app POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/qml $<TARGET_FILE_DIR:trun-app>/qml
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets/icons $<TARGET_FILE_DIR:trun-app>/icons
+    )
+else()
+    add_custom_command(TARGET trun-app POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/assets/icons ${CMAKE_BINARY_DIR}/icons
+    )
+endif()
 
 target_link_libraries(trun-app PRIVATE
     Qt6::Quick
@@ -93,6 +102,7 @@ target_link_libraries(trun-app PRIVATE
     Qt6::Core
     Qt6::Svg
     Qt6::Widgets
+    Qt6::Network
     QWindowKit::Quick
 )
 
@@ -172,6 +182,24 @@ target_link_libraries(qmltests PRIVATE
 
 install(TARGETS trun-app
     BUNDLE DESTINATION .
+)
+
+# Updater logic tests (pure functions, no network)
+add_executable(test_updater
+    src/test_updater.cpp
+    src/updater.h
+    src/updater.cpp
+    src/settings.h
+    src/settings.cpp
+    src/commandexecutor.h
+    src/commandexecutor.cpp
+)
+target_include_directories(test_updater PRIVATE src)
+target_link_libraries(test_updater PRIVATE
+    Qt6::Core
+    Qt6::Gui
+    Qt6::Network
+    Qt6::Test
 )
 
 # Executor tests

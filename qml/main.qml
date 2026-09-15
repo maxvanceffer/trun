@@ -301,6 +301,7 @@ Window {
         }
 
         onMcpConfigureRequested: mcpSetupDialog.openDialog()
+        onUpdateCheckRequested: updateDialog.openDialog()
         onDashboardRequested: {
             root.activeView = "dashboard"
             dashboardView.goHome()
@@ -336,6 +337,10 @@ Window {
 
     McpSetupDialog {
         id: mcpSetupDialog
+    }
+
+    UpdateDialog {
+        id: updateDialog
     }
 
     RunConfigDialog {

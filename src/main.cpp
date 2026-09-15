@@ -19,6 +19,7 @@
 #include "systemstats.h"
 #include "databaseservice.h"
 #include "dockerservice.h"
+#include "updater.h"
 #include <QWKQuick/qwkquickglobal.h>
 
 // Injected by CMake (-DTRUN_VERSION=); fallback for ad-hoc builds.
@@ -76,6 +77,7 @@ int main(int argc, char *argv[])
     static auto systemStats = new SystemStats();
     static auto databaseService = new DatabaseService();
     static auto dockerService = new DockerService();
+    static auto updater = new Updater(settings, commandExecutor);
     projectService->setSettings(settings);
     projectService->setExecutor(commandExecutor);
     projectService->restoreFromCache();
@@ -110,6 +112,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("systemStats", systemStats);
     engine.rootContext()->setContextProperty("databaseService", databaseService);
     engine.rootContext()->setContextProperty("dockerService", dockerService);
+    engine.rootContext()->setContextProperty("updater", updater);
     engine.rootContext()->setContextProperty("treeModel", projectService->treeModel());
     engine.rootContext()->setContextProperty("Settings", settings);
     engine.rootContext()->setContextProperty(
@@ -159,6 +162,10 @@ int main(int argc, char *argv[])
     }
 
     QObject *rootObj = engine.rootObjects().first();
+
+    // Silent update check, throttled to once per day. Surfaces as a badge
+    // on the footer update button when a newer release exists.
+    updater->checkOnStartup();
 
     // System tray: closing the window hides it, Quit lives in the tray menu.
     // Leaked intentionally for the app lifetime.
