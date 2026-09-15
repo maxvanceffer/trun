@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "ConsoleFormat.js" as ConsoleFormat
 
 Item {
     id: detailRoot
@@ -27,7 +28,7 @@ Item {
 
     // Ids are file-scoped: expose title-bar controls for hit-testing
     function hitTestControls() {
-        return [backButton, projectLinkArea]
+        return []
     }
 
     readonly property var command: {
@@ -162,6 +163,13 @@ Item {
                                    detailRoot.commandId, splitEnv(cfgEnvText))
     }
 
+    // Offer to kill whoever holds the port and re-run (used on EADDRINUSE).
+    function offerKillRun(port, pid) {
+        portBusyDialog.port = port
+        portBusyDialog.pid = pid
+        portBusyDialog.open()
+    }
+
     function formatMem(kb) {
         if (kb < 0) return "—"
         if (kb < 1024) return kb + " KB"
@@ -179,6 +187,34 @@ Item {
     function formatCpu(pct) {
         return pct < 0 ? "—" : pct.toFixed(1) + " %"
     }
+
+    // Single-text console: one TextEdit, so selection and copy can span
+    // multiple lines (per-delegate TextEdits only select one row).
+    function consoleColorFor(level) {
+        if (level === "error" || level === "stderr") return Theme.destructive
+        if (level === "warn") return "#ff9800"
+        if (level === "system") return "#9c27b0"
+        return Theme.textPrimary
+    }
+
+    function formatConsoleRow(e) {
+        return ConsoleFormat.formatLine(e.timestamp || "", e.target || "",
+            e.message || "", consoleColorFor(e.level || ""))
+    }
+
+    function rebuildConsole() {
+        var parts = []
+        var n = commandLog.count()
+        for (var i = 0; i < n; ++i)
+            parts.push(detailRoot.formatConsoleRow(commandLog.get(i)))
+        detailRoot.consoleHtml = parts.join("")
+    }
+
+    // Single HTML source for the console view: appending straight to
+    // TextEdit.text round-trips through the document serializer and the
+    // rows drift apart. One assignment point below instead.
+    property string consoleHtml: ""
+    onConsoleHtmlChanged: consoleTextEdit.text = consoleHtml
 
     function refreshStats() {
         if (commandId === "") return
@@ -199,15 +235,33 @@ Item {
         cpuText = "—"
         uptimeText = "—"
         ramFraction = -1
-        loadEffectiveConfig()
+        // The command object (and its default args) is derived from commandId
+        // and only settles after bindings update, so load on the next tick.
+        Qt.callLater(detailRoot.loadEffectiveConfig)
+        detailRoot.rebuildConsole()
         if (isRunning) refreshStats()
     }
+
+    // Re-load whenever the resolved command changes (e.g. commands arrive).
+    onCommandChanged: detailRoot.loadEffectiveConfig()
 
     onVisibleChanged: {
         if (visible) {
             loadEffectiveConfig()
+            rebuildConsole()
             refreshStats()
         }
+    }
+
+    Connections {
+        target: commandLog
+        function onRowsInserted(parent, first, last) {
+            var parts = []
+            for (var i = first; i <= last; ++i)
+                parts.push(detailRoot.formatConsoleRow(commandLog.get(i)))
+            detailRoot.consoleHtml += parts.join("")
+        }
+        function onModelReset() { detailRoot.rebuildConsole() }
     }
 
     Timer {
@@ -218,77 +272,16 @@ Item {
         onTriggered: detailRoot.refreshStats()
     }
 
-    // Breadcrumb: back + project (clickable) + command
-    Rectangle {
-        id: crumbBar
-        anchors.top: parent.top
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.leftMargin: 8
-        anchors.rightMargin: 8
-        height: 48
-        color: Theme.cardBackground
-        border.color: Theme.border
-        border.width: 1
-        radius: 8
-
-        Row {
-            anchors.verticalCenter: parent.verticalCenter
-            anchors.left: parent.left
-            anchors.leftMargin: 8
-            spacing: 8
-
-            IconButton {
-                id: backButton
-                anchors.verticalCenter: parent.verticalCenter
-                iconSource: iconBaseUrl + (Theme.isDark ? "chevron-down-dark.png" : "chevron-down.png")
-                rotation: 90
-                tooltipText: "Back"
-                onClicked: detailRoot.backRequested()
-            }
-
-            Label {
-                anchors.verticalCenter: parent.verticalCenter
-                text: projectService.activeProject.name || ""
-                color: Theme.textMuted
-                font.pixelSize: 13
-
-                MouseArea {
-                    id: projectLinkArea
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: detailRoot.backRequested()
-                }
-            }
-
-            Label {
-                anchors.verticalCenter: parent.verticalCenter
-                text: "›"
-                color: Theme.textMuted
-                font.pixelSize: 13
-            }
-
-            Label {
-                anchors.verticalCenter: parent.verticalCenter
-                text: detailRoot.command.label || ""
-                color: Theme.textPrimary
-                font.bold: true
-                font.pixelSize: 13
-            }
-        }
-    }
-
     // Stat widgets: responsive grid, wraps into fewer columns
     // (down to two rows) when the window gets narrow
     GridLayout {
         id: statsRow
-        anchors.top: crumbBar.bottom
-        anchors.topMargin: 8
+        anchors.top: parent.top
+        anchors.topMargin: Theme.spacingLg
         anchors.left: parent.left
-        anchors.leftMargin: 8
+        anchors.leftMargin: Theme.spacingLg
         anchors.right: parent.right
-        anchors.rightMargin: 8
+        anchors.rightMargin: Theme.spacingLg
         columns: Math.max(1, Math.min(5, Math.floor((detailRoot.width - 8) / 158)))
         columnSpacing: 8
         rowSpacing: 8
@@ -449,6 +442,19 @@ Item {
         onTriggered: detailRoot.runEffective()
     }
 
+    // Refused dependency (ECONNREFUSED in the log): nothing to kill, just
+    // re-run once the dependency is up. Decided by the log line alone.
+    property string depHost: ""
+    property int depPort: 0
+    property string depSvc: ""
+
+    function offerRefusedRun(host, port, svcName) {
+        depHost = host
+        depPort = port
+        depSvc = svcName
+        depDialog.open()
+    }
+
     Dialog {
         id: portBusyDialog
         property int port: 0
@@ -550,6 +556,108 @@ Item {
         }
     }
 
+    Dialog {
+        id: depDialog
+        objectName: "depDialog"
+        anchors.centerIn: parent
+        width: Math.min(parent.width - 64, 420)
+        modal: true
+        padding: 0
+
+        background: Rectangle {
+            color: Theme.cardBackground
+            border.color: Theme.border
+            radius: 8
+        }
+
+        contentItem: ColumnLayout {
+            spacing: 12
+
+            Label {
+                text: qsTr("Connection refused")
+                color: Theme.textPrimary
+                font.bold: true
+                font.pixelSize: 13
+                Layout.fillWidth: true
+                Layout.leftMargin: 20
+                Layout.rightMargin: 20
+                Layout.topMargin: 20
+            }
+
+            Label {
+                text: detailRoot.depSvc !== ""
+                    ? qsTr("%1 at %2 refused the connection. Start it, then run again.")
+                        .arg(detailRoot.depSvc).arg(detailRoot.depHost + ":" + detailRoot.depPort)
+                    : qsTr("%1 refused the connection. Start the dependency, then run again.")
+                        .arg(detailRoot.depHost + ":" + detailRoot.depPort)
+                color: Theme.textMuted
+                font.pixelSize: 12
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.leftMargin: 20
+                Layout.rightMargin: 20
+            }
+
+            RowLayout {
+                spacing: 8
+                Layout.fillWidth: true
+                Layout.leftMargin: 20
+                Layout.rightMargin: 20
+                Layout.bottomMargin: 20
+
+                Item { Layout.fillWidth: true }
+
+                Button {
+                    Layout.preferredWidth: 110
+                    Layout.preferredHeight: 30
+                    font.pixelSize: 12
+
+                    background: Rectangle {
+                        radius: 6
+                        color: "transparent"
+                        border.color: Theme.border
+                        border.width: 1
+                    }
+
+                    contentItem: Label {
+                        text: qsTr("Cancel")
+                        color: Theme.textPrimary
+                        font.pixelSize: 12
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    onClicked: depDialog.close()
+                }
+
+                Button {
+                    Layout.preferredWidth: 110
+                    Layout.preferredHeight: 30
+                    font.pixelSize: 12
+
+                    background: Rectangle {
+                        radius: 6
+                        color: Theme.primary
+                    }
+
+                    contentItem: Label {
+                        text: qsTr("Run again")
+                        color: Theme.primaryForeground
+                        font.pixelSize: 12
+                        font.bold: true
+                        horizontalAlignment: Text.AlignHCenter
+                        verticalAlignment: Text.AlignVCenter
+                    }
+
+                    onClicked: {
+                        depDialog.close()
+                        detailRoot.runEffective()
+                    }
+                }
+            }
+        }
+    }
+
     // Console of the selected command
     Rectangle {
         anchors.top: actionsRow.bottom
@@ -594,8 +702,8 @@ Item {
             }
         }
 
-        ListView {
-            id: consoleView
+        Flickable {
+            id: consoleFlick
             anchors.top: detailConsoleHeader.bottom
             anchors.topMargin: 4
             anchors.bottom: parent.bottom
@@ -604,31 +712,31 @@ Item {
             anchors.leftMargin: 8
             anchors.right: parent.right
             anchors.rightMargin: 8
-            model: commandLog
-            delegate: TextEdit {
-                text: "[" + timestamp + "] " + target + ": " + message
-                color: {
-                    if (level === "error" || level === "stderr") return Theme.destructive
-                    if (level === "warn") return "#ff9800"
-                    if (level === "system") return "#9c27b0"
-                    return Theme.textPrimary
-                }
-                font.family: "Menlo"
-                font.pixelSize: 11
-                wrapMode: TextEdit.Wrap
-                width: consoleView.width
-                readOnly: true
-                selectByMouse: true
-                selectByKeyboard: true
-            }
-
+            contentWidth: width
+            contentHeight: consoleTextEdit.height
             clip: true
             ScrollBar.vertical: ScrollBar {
                 active: true
             }
 
-            onCountChanged: {
-                if (model && model.rowCount() > 0)
+            TextEdit {
+                id: consoleTextEdit
+                width: consoleFlick.width
+                textFormat: Text.RichText
+                readOnly: true
+                selectByMouse: true
+                selectByKeyboard: true
+                wrapMode: TextEdit.Wrap
+                font.family: "Menlo"
+                font.pixelSize: 11
+                color: Theme.textPrimary
+                selectionColor: Qt.rgba(Theme.accent.r, Theme.accent.g,
+                                        Theme.accent.b, 0.35)
+                selectedTextColor: Theme.textPrimary
+            }
+
+            onContentHeightChanged: {
+                if (contentHeight > height)
                     contentY = contentHeight - height
             }
         }

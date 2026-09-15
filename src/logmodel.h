@@ -61,6 +61,22 @@ public:
         endResetModel();
     }
 
+    // Random access for the single-text console (DetailPage rebuilds and
+    // appends HTML without going through ListView delegates).
+    Q_INVOKABLE int count() const { return static_cast<int>(m_entries.size()); }
+
+    Q_INVOKABLE QVariantMap get(int row) const {
+        if (row < 0 || row >= m_entries.size())
+            return {};
+        const auto &e = m_entries[row];
+        return {
+            {QStringLiteral("timestamp"), e.timestamp},
+            {QStringLiteral("level"), e.level},
+            {QStringLiteral("target"), e.target},
+            {QStringLiteral("message"), e.message},
+        };
+    }
+
     QVariant data(const QModelIndex &index, int role) const override {
         if (!index.isValid() || index.row() >= m_entries.size())
             return {};

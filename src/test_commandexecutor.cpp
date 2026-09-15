@@ -28,6 +28,7 @@ private slots:
     void testAdoptRestoresStartTime();
     void testPortBusyFreeAndOccupied();
     void testKillExternalGuards();
+    void testStripsAnsiEscapes();
 };
 
 void TestCommandExecutor::testRunEcho() {
@@ -309,6 +310,37 @@ void TestCommandExecutor::testKillExternalGuards() {
 #else
     QSKIP("port checks are POSIX-only");
 #endif
+}
+
+void TestCommandExecutor::testStripsAnsiEscapes() {
+    CommandExecutor executor;
+    QSignalSpy finishedSpy(&executor, &CommandExecutor::finished);
+    QSignalSpy outSpy(&executor, &CommandExecutor::outputReceived);
+
+    // SGR colors survive (the QML console renders them); OSC8 hyperlinks,
+    // other CSI sequences and controls are stripped
+    const QString line1 = QStringLiteral("\x1b[32m[OK]\x1b[0m Listening on "
+        "\x1b]8;;https://127.0.0.1:8000\x1b\\https://127.0.0.1:8000\x1b]8;;\x1b\\");
+    const QString line2 = QStringLiteral("\x1b]8;;http://localhost:3000\x07"
+        "click\x1b]8;;\x07 done");
+    const QString line3 = QStringLiteral("A\x1b[2KB\x1b[?25lC");
+    const int id = executor.run(QStringLiteral("/usr/bin/printf"),
+        {QStringLiteral("%s\n%s\n%s\n"), line1, line2, line3}, QString(), "ansi-test", "test:ansi");
+    QVERIFY(id > 0);
+    QVERIFY2(finishedSpy.wait(5000), "finished() never arrived");
+
+    QStringList lines;
+    for (const auto &args : outSpy) {
+        if (args.at(0).toInt() == id && !args.at(2).toBool())
+            lines << args.at(3).toString();
+    }
+    QVERIFY2(lines.contains(QStringLiteral(
+        "\x1b[32m[OK]\x1b[0m Listening on https://127.0.0.1:8000")),
+        qPrintable(QStringLiteral("SGR line altered, got: %1").arg(lines.join(u'|'))));
+    QVERIFY2(lines.contains(QStringLiteral("click done")),
+        qPrintable(QStringLiteral("cleaned line2 missing, got: %1").arg(lines.join(u'|'))));
+    QVERIFY2(lines.contains(QStringLiteral("ABC")),
+        qPrintable(QStringLiteral("CSI line not cleaned, got: %1").arg(lines.join(u'|'))));
 }
 
 void TestCommandExecutor::testRevealFolderValidation() {

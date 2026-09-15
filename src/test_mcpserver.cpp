@@ -17,7 +17,7 @@ class TestMcpServer : public QObject {
 
 private slots:
     void testInitialize();
-    void testToolsListHasSeven();
+    void testToolsList();
     void testUnknownMethodAndTool();
     void testProjectsAndCommands();
     void testReadLogEmpty();
@@ -85,7 +85,7 @@ void TestMcpServer::testInitialize()
              QStringLiteral("trun"));
 }
 
-void TestMcpServer::testToolsListHasSeven()
+void TestMcpServer::testToolsList()
 {
     auto fx = makeFixture();
     QVERIFY(fx);
@@ -98,12 +98,14 @@ void TestMcpServer::testToolsListHasSeven()
                                  .toObject()
                                  .value(QStringLiteral("tools"))
                                  .toArray();
-    QCOMPARE(tools.size(), 7);
+    QCOMPARE(tools.size(), 14);
     QSet<QString> names;
     for (const QJsonValue &t : tools)
         names << t.toObject().value(QStringLiteral("name")).toString();
     for (const char *n : {"list_projects", "list_commands", "status", "run", "stop",
-                          "read_log", "search_logs"})
+                          "read_log", "search_logs", "docker_status", "docker_ps",
+                          "docker_images", "docker_logs", "docker_control", "docker_stats",
+                          "docker_prune"})
         QVERIFY2(names.contains(QString::fromUtf8(n)), n);
 }
 

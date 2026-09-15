@@ -19,16 +19,24 @@ Button {
         }
     }
 
-    implicitWidth: 28
-    implicitHeight: 28
+    implicitWidth: Theme.sidebarRowHeight
+    implicitHeight: Theme.sidebarRowHeight
     padding: 6
     flat: true
+    hoverEnabled: true
+    opacity: enabled ? 1 : 0.4
+
+    HoverHandler {
+        id: hover
+        enabled: iconButton.enabled
+        cursorShape: Qt.PointingHandCursor
+    }
 
     background: Rectangle {
-        color: (iconButton.hovered || iconButton.active)
+        color: (hover.hovered || iconButton.hovered || iconButton.active)
             ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
             : "transparent"
-        radius: 6
+        radius: Theme.radiusSm
     }
 
     contentItem: Image {
@@ -73,17 +81,17 @@ Button {
         background: Rectangle {
             color: Theme.cardBackground
             border.color: Theme.border
-            radius: 6
+            radius: Theme.radiusSm
         }
 
         contentItem: Label {
             text: tooltip.text
             color: Theme.textPrimary
-            font.pixelSize: 11
-            leftPadding: 8
-            rightPadding: 8
-            topPadding: 4
-            bottomPadding: 4
+            font.pixelSize: Theme.fontSizeSm
+            leftPadding: Theme.spacingSm
+            rightPadding: Theme.spacingSm
+            topPadding: Theme.spacingXs
+            bottomPadding: Theme.spacingXs
         }
     }
 }

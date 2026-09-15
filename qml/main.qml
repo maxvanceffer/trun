@@ -1,53 +1,82 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import QtQuick.Window
+import QWindowKit
 
-ApplicationWindow {
+Window {
     id: root
     width: 1200
     height: 800
     minimumWidth: 900
     minimumHeight: 600
-    // Shown deferred (native expanded-area setup first, iDescriptor order)
+    // Shown deferred: the engine needs the project list first.
     visible: false
     title: "trun"
-    // Native unified toolbar (iDescriptor recipe): Qt negotiates
-    // full-size content with AppKit itself. No FramelessWindowHint,
-    // no frame agent — both fought the native path.
-    flags: Qt.Window | Qt.NoTitleBarBackgroundHint | Qt.ExpandedClientAreaHint
-    // Transparent root: rounded backdrop below draws the window shape.
+    // Transparent root: the native blur shows through the translucent sidebar.
     color: "transparent"
 
-    // Window backdrop: content tone, rounded unless maximized
-    Rectangle {
-        anchors.fill: parent
-        radius: (Window.visibility === Window.Maximized
-                 || Window.visibility === Window.FullScreen) ? 0 : 10
-        color: Theme.windowBackground
+    readonly property bool zoomed: visibility === Window.Maximized
+                                   || visibility === Window.FullScreen
+    // Outer corner rounding of the frameless window (square when zoomed).
+    readonly property int windowRadius: zoomed ? 0 : Theme.radiusLg
+
+    // QWindowKit drives dragging, resizing and the native macOS traffic
+    // lights. No FramelessWindowHint: the agent owns the native frame.
+    WindowAgent {
+        id: windowAgent
     }
 
-    // Drag strip (iDescriptor pattern): declared first (bottom of z),
-    // buttons and rows above keep their clicks, empty areas drag.
-    MouseArea {
-        id: dragStrip
+    // Title-bar drag region spanning the top strip. Interactive controls
+    // inside it are handed to the agent via markHitTest().
+    Item {
+        id: titleBar
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        height: 48
-        acceptedButtons: Qt.LeftButton
-        onPressed: function(mouse) { root.startSystemMove() }
-        onDoubleClicked: {
-            if (root.visibility === Window.Maximized)
-                root.showNormal()
-            else
-                root.showMaximized()
-        }
+        height: Theme.titleBarHeight
+        z: 50
     }
 
     Component.onCompleted: {
+        windowAgent.setup(root)
+        windowAgent.setTitleBar(titleBar)
         Qt.callLater(function() {
             root.visible = projectService.projectCount > 0
         })
+    }
+
+    // The native handle only exists once the window is shown, and touching
+    // window attributes before that trips QWindowKit's Q_ASSERT.
+    onVisibleChanged: if (visible) applyPlatformChrome()
+
+    // Native chrome: prefers Liquid Glass (macOS 26+) and falls back to the
+    // classic vibrancy blur. Tints follow the theme.
+    function applyPlatformChrome() {
+        sidebar.markHitTest(windowAgent)
+        dashboardView.markHitTest(windowAgent)
+
+        if (Qt.platform.os !== "osx")
+            return
+
+        var glass = windowAgent.setWindowAttribute("glass-effect", "regular")
+        if (glass) {
+            windowAgent.setWindowAttribute("glass-corner-radius", root.windowRadius)
+            windowAgent.setWindowAttribute("glass-tint-color",
+                Qt.rgba(Theme.sidebarBackground.r, Theme.sidebarBackground.g,
+                        Theme.sidebarBackground.b, 0.5))
+        } else {
+            windowAgent.setWindowAttribute("blur-effect",
+                                           Theme.isDark ? "dark" : "light")
+        }
+    }
+
+    Connections {
+        target: Theme
+        function onIsDarkChanged() {
+            if (root.visible)
+                root.applyPlatformChrome()
+        }
     }
 
     property string activeView: "dashboard"
@@ -267,11 +296,23 @@ ApplicationWindow {
         // and selecting another project must drop the open detail page.
         onProjectSelected: function(projectId) {
             logModel.add("info", "app", "Selecting project: " + projectId)
-            dashboardView.closeDetail()
             root.activeView = "dashboard"
+            dashboardView.openProject()
         }
 
         onMcpConfigureRequested: mcpSetupDialog.openDialog()
+        onDashboardRequested: {
+            root.activeView = "dashboard"
+            dashboardView.goHome()
+        }
+        onDatabasesRequested: {
+            root.activeView = "dashboard"
+            dashboardView.openDatabases()
+        }
+        onDockerRequested: {
+            root.activeView = "dashboard"
+            dashboardView.openDocker()
+        }
         onAddCustomRequested: function(folderPath) {
             newCommandDialog.openCreate(folderPath)
         }
@@ -321,22 +362,10 @@ ApplicationWindow {
         anchors.left: sidebar.right
         anchors.right: parent.right
 
-        // Soft divider shadow on the content's left edge
-        Rectangle {
-            anchors.top: parent.top
-            anchors.bottom: parent.bottom
-            anchors.left: parent.left
-            width: 12
-            gradient: Gradient {
-                orientation: Gradient.Horizontal
-                GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0.2) }
-                GradientStop { position: 1.0; color: Qt.rgba(0, 0, 0, 0) }
-            }
-        }
-
         Dashboard {
             id: dashboardView
             anchors.fill: parent
+            cornerRadius: root.windowRadius
             visible: root.activeView === "dashboard"
         }
 
@@ -346,6 +375,24 @@ ApplicationWindow {
             target: projectService
             function onProjectsChanged() {
                 dashboardView.closeDetail()
+            }
+        }
+    }
+
+    // Crisp, narrow shadow the content panel casts onto the sidebar,
+    // hugging the seam.
+    Rectangle {
+        anchors.top: parent.top
+        anchors.bottom: parent.bottom
+        anchors.right: sidebar.right
+        width: Theme.spacingXs
+        z: 20
+        gradient: Gradient {
+            orientation: Gradient.Horizontal
+            GradientStop { position: 0.0; color: Qt.rgba(0, 0, 0, 0) }
+            GradientStop {
+                position: 1.0
+                color: Qt.rgba(0, 0, 0, Theme.isDark ? 0.26 : 0.12)
             }
         }
     }

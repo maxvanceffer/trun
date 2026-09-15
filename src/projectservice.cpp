@@ -26,6 +26,35 @@ void ProjectService::setSettings(Settings *settings)
     m_settings = settings;
     loadCustomCommands();
     loadPins();
+    loadRecents();
+}
+
+void ProjectService::setExecutor(CommandExecutor *executor)
+{
+    m_executor = executor;
+    if (!m_executor)
+        return;
+    connect(m_executor, &CommandExecutor::runningCommandsChanged,
+            this, &ProjectService::runningCommandsChanged);
+    // Record every started command (any launch path) into the recent list.
+    connect(m_executor, &CommandExecutor::started, this,
+            [this](int, int, const QString &label, const QString &, const QString &runKey) {
+                const int sep = runKey.lastIndexOf(u'|');
+                if (sep < 0)
+                    return;
+                const QString projectId = runKey.left(sep);
+                const QString commandId = runKey.mid(sep + 1);
+                QString projectName;
+                QString projectPath;
+                for (const auto &p : m_projects) {
+                    if (p.value(QStringLiteral("id")).toString() == projectId) {
+                        projectName = p.value(QStringLiteral("name")).toString();
+                        projectPath = p.value(QStringLiteral("project_path")).toString();
+                        break;
+                    }
+                }
+                recordRecent(projectId, commandId, label, projectName, projectPath);
+            });
 }
 
 void ProjectService::loadCustomCommands()
@@ -100,7 +129,7 @@ void ProjectService::scanFolder(const QString &rootPath) {
 }
 
 namespace {
-constexpr int kCacheVersion = 2; // bump when scan output format changes
+constexpr int kCacheVersion = 3; // bump when scan output format changes
 }
 
 bool ProjectService::restoreFromCache()
@@ -377,6 +406,113 @@ void ProjectService::persistPins()
                     QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
 }
 
+void ProjectService::loadRecents()
+{
+    m_recents.clear();
+    if (!m_settings)
+        return;
+    const QByteArray raw = m_settings->get(QStringLiteral("recentCommands")).toByteArray();
+    if (raw.isEmpty())
+        return;
+    for (const QJsonValue &v : QJsonDocument::fromJson(raw).array()) {
+        const QJsonObject o = v.toObject();
+        if (!o.value(QStringLiteral("projectId")).toString().isEmpty()
+            && !o.value(QStringLiteral("commandId")).toString().isEmpty())
+            m_recents.append(o);
+    }
+}
+
+void ProjectService::persistRecents()
+{
+    if (!m_settings)
+        return;
+    QJsonArray arr;
+    for (const auto &r : m_recents)
+        arr.append(r);
+    m_settings->set(QStringLiteral("recentCommands"),
+                    QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact)));
+}
+
+void ProjectService::recordRecent(const QString &projectId, const QString &commandId,
+                                  const QString &label, const QString &projectName,
+                                  const QString &projectPath)
+{
+    if (projectId.isEmpty() || commandId.isEmpty())
+        return;
+    // Move an existing entry to the front instead of duplicating it.
+    m_recents.erase(std::remove_if(m_recents.begin(), m_recents.end(),
+                                   [&](const QJsonObject &r) {
+                                       return r.value(QStringLiteral("projectId")).toString() == projectId
+                                           && r.value(QStringLiteral("commandId")).toString() == commandId;
+                                   }),
+                    m_recents.end());
+    m_recents.prepend(QJsonObject{
+        {QStringLiteral("projectId"), projectId},
+        {QStringLiteral("commandId"), commandId},
+        {QStringLiteral("label"), label},
+        {QStringLiteral("projectName"), projectName},
+        {QStringLiteral("projectPath"), projectPath},
+        {QStringLiteral("lastUsedAt"),
+         QDateTime::currentDateTime().toString(Qt::ISODateWithMs)},
+    });
+    while (m_recents.size() > 20)
+        m_recents.removeLast();
+    persistRecents();
+    emit recentCommandsChanged();
+}
+
+QVariantList ProjectService::recentCommands() const
+{
+    QVariantList out;
+    for (const auto &r : m_recents)
+        out << r.toVariantMap();
+    return out;
+}
+
+void ProjectService::clearRecentCommands()
+{
+    if (m_recents.isEmpty())
+        return;
+    m_recents.clear();
+    persistRecents();
+    emit recentCommandsChanged();
+}
+
+QVariantList ProjectService::runningCommands() const
+{
+    QVariantList out;
+    if (!m_executor)
+        return out;
+    const QVariantList processes = m_executor->runningProcesses();
+    for (const QVariant &v : processes) {
+        const QVariantMap rp = v.toMap();
+        const QString runKey = rp.value(QStringLiteral("commandId")).toString();
+        QString projectId;
+        QString commandId = runKey;
+        const int sep = runKey.lastIndexOf(u'|');
+        if (sep >= 0) {
+            projectId = runKey.left(sep);
+            commandId = runKey.mid(sep + 1);
+        }
+        QString projectName;
+        for (const auto &p : m_projects) {
+            if (p.value(QStringLiteral("id")).toString() == projectId) {
+                projectName = p.value(QStringLiteral("name")).toString();
+                break;
+            }
+        }
+        out << QVariantMap{
+            {QStringLiteral("projectId"), projectId},
+            {QStringLiteral("commandId"), commandId},
+            {QStringLiteral("label"), rp.value(QStringLiteral("label"))},
+            {QStringLiteral("pid"), rp.value(QStringLiteral("pid"))},
+            {QStringLiteral("startedAt"), rp.value(QStringLiteral("startedAt"))},
+            {QStringLiteral("projectName"), projectName},
+        };
+    }
+    return out;
+}
+
 QVariantList ProjectService::pinnedCommands() const
 {
     QVariantList out;
@@ -530,13 +666,57 @@ bool ProjectService::runCommandEffective(const QString &projectRef, const QStrin
     bool allowMultiple = false;
     resolveRunConfig(projectId, commandId, executable, args, workdir, env, allowMultiple);
     // Runs are tracked by project-scoped key: bare command ids
-    // (npm:serve) repeat across projects.
+    // (npm:serve) repeat across projects. Recent history is recorded from
+    // CommandExecutor::started, so every launch path is covered.
     const QString runKey = projectId + u'|' + commandId;
     return runResolved(runKey, executable, args, workdir, label, env, allowMultiple) > 0;
+}
+QString ProjectService::scriptTextOf(const QJsonValue &value)
+{
+    if (value.isString())
+        return value.toString();
+    if (value.isArray()) {
+        QStringList parts;
+        for (const QJsonValue &a : value.toArray()) {
+            if (a.isString())
+                parts << a.toString();
+        }
+        return parts.join(u' ');
+    }
+    return {};
+}
+
+QString ProjectService::resolveNpmScript(const QString &dir, const QString &script,
+                                         int depth, QStringList &visited)
+{
+    if (depth > 4 || script.isEmpty())
+        return script;
+    // Pure delegation: `npm [--prefix DIR] [run] <name>`
+    // (also yarn/pnpm/bun, --cwd/--dir/-C). Anything else is the real text.
+    static const QRegularExpression chainRe(
+        QStringLiteral("^\\s*(npm|pnpm|yarn|bun)\\s+(?:(?:--prefix|--cwd|--dir|-C)\\s+(\\S+)\\s+)?(?:run\\s+)?([^\\s]+)\\s*$"));
+    const auto m = chainRe.match(script);
+    if (!m.hasMatch())
+        return script;
+    const QString targetDir =
+        m.captured(2).isEmpty() ? dir : QDir::cleanPath(dir + u'/' + m.captured(2));
+    const QString key = targetDir + u'|' + m.captured(3);
+    if (visited.contains(key))
+        return script; // cycle: keep the original text
+    visited << key;
+    QFile f(targetDir + QStringLiteral("/package.json"));
+    if (!f.open(QIODevice::ReadOnly))
+        return script;
+    const QString next =
+        scriptTextOf(QJsonDocument::fromJson(f.readAll()).object().value(QStringLiteral("scripts")).toObject().value(m.captured(3)));
+    if (next.isEmpty())
+        return script;
+    return resolveNpmScript(targetDir, next, depth + 1, visited);
 }
 
 QJsonObject ProjectService::detectProgram(const QString &executable, const QString &scriptText)
 {
+
     struct Detector {
         const char *program;
         std::vector<const char *> exes; // string literals only: static lifetime
@@ -555,7 +735,30 @@ QJsonObject ProjectService::detectProgram(const QString &executable, const QStri
         {"django", {"django-admin", "manage.py"}, 8000, "runserver\\s+(?:[\\d.]+:)?(\\d+)"},
     };
 
-    const QString firstToken = scriptText.split(u' ', Qt::SkipEmptyParts).value(0);
+    // Env wrappers hide the real program (`cross-env NODE_ENV=x vite`):
+    // drop them (plus VAR=x pairs and their flags) before the first token.
+    QStringList tokens = scriptText.split(u' ', Qt::SkipEmptyParts);
+    bool strippedWrapper = false;
+    bool skipNext = false;
+    while (!tokens.isEmpty()) {
+        if (skipNext) {
+            tokens.removeFirst();
+            skipNext = false;
+            continue;
+        }
+        const QString &t = tokens.first();
+        const bool isWrapper = t == QLatin1String("cross-env") || t == QLatin1String("env")
+            || t == QLatin1String("dotenv") || t == QLatin1String("dotenv-cli") || t == QLatin1String("--");
+        if (isWrapper || t.contains(u'=') || (strippedWrapper && t.startsWith(u'-'))) {
+            if (t == QLatin1String("-e") || t == QLatin1String("--env"))
+                skipNext = true;
+            strippedWrapper = strippedWrapper || isWrapper;
+            tokens.removeFirst();
+            continue;
+        }
+        break;
+    }
+    const QString firstToken = tokens.value(0);
     QString base = QFileInfo(firstToken).fileName().toLower();
     if (base.isEmpty())
         base = QFileInfo(executable).fileName().toLower();
@@ -716,8 +919,10 @@ QList<QJsonObject> ProjectService::detectCommands(const QString &manifestPath, c
                         {"command", "npm"},
                         {"args", QJsonArray::fromStringList({"run", it.key()})}
                     };
-                    const QJsonObject det =
-                        detectProgram(QStringLiteral("npm"), it.value().toString());
+                    QStringList visited;
+                    const QJsonObject det = detectProgram(
+                        QStringLiteral("npm"),
+                        resolveNpmScript(projectPath, scriptTextOf(it.value()), 0, visited));
                     if (!det.isEmpty()) {
                         cmd.insert(QStringLiteral("detectedProgram"),
                                    det.value(QStringLiteral("program")));
@@ -746,8 +951,8 @@ QList<QJsonObject> ProjectService::detectCommands(const QString &manifestPath, c
                         {"command", "composer"},
                         {"args", QJsonArray::fromStringList({it.key()})}
                     };
-                    const QJsonObject det =
-                        detectProgram(QStringLiteral("composer"), it.value().toString());
+                    const QJsonObject det = detectProgram(
+                        QStringLiteral("composer"), scriptTextOf(it.value()));
                     if (!det.isEmpty()) {
                         cmd.insert(QStringLiteral("detectedProgram"),
                                    det.value(QStringLiteral("program")));

@@ -28,6 +28,10 @@ class ProjectService : public QObject {
     Q_PROPERTY(QList<QJsonObject> activeProjectCommands READ activeProjectCommands NOTIFY activeProjectCommandsChanged)
     Q_PROPERTY(int projectCount READ projectCount NOTIFY projectsChanged)
     Q_PROPERTY(QVariantList pinnedCommands READ pinnedCommands NOTIFY pinnedChanged)
+    // Recently run commands (persisted), newest first.
+    Q_PROPERTY(QVariantList recentCommands READ recentCommands NOTIFY recentCommandsChanged)
+    // Commands running right now (joined with project metadata).
+    Q_PROPERTY(QVariantList runningCommands READ runningCommands NOTIFY runningCommandsChanged)
     Q_PROPERTY(QString rootPath READ rootPath NOTIFY projectsChanged)
 
 public:
@@ -37,7 +41,7 @@ public:
     QString rootPath() const { return m_rootPath; }
 
     void setSettings(Settings *settings);
-    void setExecutor(CommandExecutor *executor) { m_executor = executor; }
+    void setExecutor(CommandExecutor *executor);
 
     static QStringList splitArgs(const QString &text);
 
@@ -55,6 +59,11 @@ public:
     Q_INVOKABLE QVariantList pinnedCommands() const;
     Q_INVOKABLE bool isPinned(const QString &projectId, const QString &commandId) const;
     Q_INVOKABLE void setPinned(const QString &projectId, const QString &commandId, bool pinned);
+    // Recently run commands, persisted; clear wipes the history.
+    Q_INVOKABLE QVariantList recentCommands() const;
+    Q_INVOKABLE void clearRecentCommands();
+    // Commands running right now, with resolved project metadata.
+    Q_INVOKABLE QVariantList runningCommands() const;
     // Full launch: stored run configuration + overrides applied, then run.
     // Shared by the tray menu and the MCP server.
     Q_INVOKABLE bool runCommandEffective(const QString &projectRef, const QString &commandRef);
@@ -77,6 +86,8 @@ signals:
     void projectsChanged();
     void treeModelChanged();
     void pinnedChanged();
+    void recentCommandsChanged();
+    void runningCommandsChanged();
     void scanProgress(const QString &currentDir, int foundCount);
     void scanComplete(int projectCount);
     void activeProjectChanged();
@@ -99,6 +110,7 @@ private:
     QList<QJsonObject> m_scanned; // scan results without custom commands
     QList<QJsonObject> m_customCommands; // user-added, merged on apply
     QList<QJsonObject> m_pins; // {projectId, commandId}, persisted in Settings
+    QList<QJsonObject> m_recents; // {projectId, commandId, label, ...}, persisted
     QJsonObject m_activeProject;
     QList<QJsonObject> m_activeProjectCommands;
     QSet<QString> m_visitedDirs;
@@ -110,9 +122,22 @@ private:
     void loadPins();
     void persistPins();
     void prunePins();
+    void loadRecents();
+    void persistRecents();
+    void recordRecent(const QString &projectId, const QString &commandId,
+                      const QString &label, const QString &projectName,
+                      const QString &projectPath);
     // Static program detection: {program, port} from an executable + script
     // text (e.g. "vite --port 3000" -> vite:3000). Empty object = unknown.
     static QJsonObject detectProgram(const QString &executable, const QString &scriptText);
+    // Follows `npm [--prefix DIR] [run] <name>` delegation chains across
+    // manifests (e.g. backend "npm --prefix ../frontend run serve" ->
+    // frontend "vite serve"), so proxied scripts are detected as the real
+    // program. Cycle-safe, returns the original text when unresolvable.
+    static QString resolveNpmScript(const QString &dir, const QString &script,
+                                    int depth, QStringList &visited);
+    // Script value (string or string array) as plain text for detection.
+    static QString scriptTextOf(const QJsonValue &value);
     QString readManifestName(const QString &manifestPath, const QString &manifestName, const QString &fallback) const;
 
     ProjectListModel *m_projectListModel;

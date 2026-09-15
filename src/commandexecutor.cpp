@@ -3,6 +3,7 @@
 #include <QDir>
 #include <QFileInfo>
 #include <QProcessEnvironment>
+#include <QRegularExpression>
 
 #ifndef Q_OS_WINDOWS
 #include <signal.h>
@@ -17,6 +18,34 @@
 #endif
 
 namespace {
+
+// Symfony CLI and friends wrap URLs in OSC8 hyperlinks
+// ("\x1b]8;;https://127.0.0.1:8000\x1b\\https://127.0.0.1:8000\x1b]8;;\x1b\\")
+// and colorize with CSI sequences ("\x1b[32m"). A terminal renders only the
+// visible text, so drop the control sequences the same way: every consumer
+// (QML console, port sniffing, MCP logs) gets clean lines.
+QString stripAnsi(const QString &in)
+{
+    QString out = in;
+    // OSC sequences (incl. OSC8 hyperlink open/close): drop entirely,
+    // the visible link text stays
+    static const QRegularExpression osc(
+        QStringLiteral("\x1b\\][^\x07\x1b]*(?:\x1b\\\\|\x07)"));
+    out.replace(osc, QString());
+    // CSI sequences except SGR colors (final 'm'): SGR is preserved so the
+    // QML console can render colors; cursor and editing sequences have no
+    // visible meaning in a log view.
+    static const QRegularExpression csi(QStringLiteral("\x1b\\[[0-9;:?]*[ -/]*[@-ln-~]"));
+    out.replace(csi, QString());
+    // Leftover C0 controls have no visible meaning (ESC itself is excluded:
+    // it opens the SGR color sequences kept above). A stray ESC is dropped
+    // separately, unless it opens one of those sequences.
+    static const QRegularExpression c0(QStringLiteral("[\x00-\x08\x0b\x0c\x0e-\x1a\x1c-\x1f\x7f]"));
+    out.replace(c0, QString());
+    static const QRegularExpression strayEsc(QStringLiteral("\x1b(?!\\[)"));
+    out.replace(strayEsc, QString());
+    return out;
+}
 
 bool pidAliveWithCommand(int pid, const QString &command)
 {
@@ -82,6 +111,8 @@ int CommandExecutor::runWithEnv(const QString &command, const QStringList &args,
         emit started(id, static_cast<int>(it->process->processId()), it->label,
                      it->process->program() + QLatin1Char(' ') + it->process->arguments().join(QLatin1Char(' ')),
                      it->commandId);
+        // pid only exists now, so the running list becomes queryable here.
+        emit runningCommandsChanged();
     });
 
     connect(process, &QProcess::readyReadStandardOutput, this, [this, id]() {
@@ -454,7 +485,7 @@ void CommandExecutor::flushReady(int id, bool isError)
     while ((nl = remainder->indexOf('\n')) >= 0) {
         QByteArray rawLine = remainder->left(nl);
         remainder->remove(0, nl + 1);
-        QString line = QString::fromUtf8(rawLine).remove(QLatin1Char('\r'));
+        QString line = stripAnsi(QString::fromUtf8(rawLine).remove(QLatin1Char('\r')));
         emit outputReceived(id, it->label, isError, line, it->commandId);
     }
 }

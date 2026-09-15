@@ -30,5 +30,10 @@
         "https://doc.qt.io/"
       ]
     }
+  },
+  "permission": {
+    "external_directory": {
+      "/tmp/**": "allow"
+    }
   }
 }

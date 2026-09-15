@@ -1,6 +1,53 @@
 #include "treemodel.h"
+#include <algorithm>
+#include <QFile>
 #include <QFileInfo>
 #include <QDir>
+#include <QTextStream>
+
+namespace {
+
+// Repo name from <dir>/.git/config's origin URL, empty when unavailable.
+QString gitRepoName(const QString &dir)
+{
+    QFile config(dir + QStringLiteral("/.git/config"));
+    if (!config.open(QIODevice::ReadOnly | QIODevice::Text))
+        return {};
+
+    QTextStream in(&config);
+    bool inOrigin = false;
+    QString url;
+    while (!in.atEnd()) {
+        const QString line = in.readLine().trimmed();
+        if (line.startsWith(QLatin1Char('['))) {
+            inOrigin = line.contains(QStringLiteral("remote \"origin\""));
+            continue;
+        }
+        if (inOrigin && line.startsWith(QLatin1String("url"))) {
+            const int eq = line.indexOf(QLatin1Char('='));
+            if (eq >= 0) {
+                url = line.mid(eq + 1).trimmed();
+                break;
+            }
+        }
+    }
+    if (url.isEmpty())
+        return {};
+
+    QString name = url;
+    while (name.endsWith(QLatin1Char('/')))
+        name.chop(1);
+    if (name.endsWith(QLatin1String(".git")))
+        name.chop(4);
+    const int sep = std::max(name.lastIndexOf(QLatin1Char('/')),
+                             name.lastIndexOf(QLatin1Char(':')));
+    if (sep >= 0)
+        name = name.mid(sep + 1);
+    return name;
+}
+
+} // namespace
+
 
 // ============================================================
 // QmlTreeItem
@@ -71,6 +118,33 @@ QmlTreeItem *QmlTreeModel::getItem(const QModelIndex &idx) const
 void QmlTreeModel::setRootPath(const QString &rootPath)
 {
     m_rootPath = QDir::cleanPath(rootPath);
+    if (m_rootPath.isEmpty() || m_rootPath == QLatin1String("."))
+        return;
+
+    // Rebuild the visible root node from scratch.
+    beginResetModel();
+    delete rootItem;
+    rootItem = new QmlTreeItem(QmlTreeItem::Folder);
+    endResetModel();
+
+    const int row = rootItem->childCount();
+    beginInsertRows(QModelIndex(), row, row);
+    m_rootFolder = new QmlTreeItem(QmlTreeItem::Folder, rootItem);
+    m_rootFolder->m_name = folderDisplayName(m_rootPath);
+    m_rootFolder->m_path = m_rootPath;
+    rootItem->appendChild(m_rootFolder);
+    endInsertRows();
+}
+
+QString QmlTreeModel::folderDisplayName(const QString &absoluteFolderPath)
+{
+    const QString base = QFileInfo(absoluteFolderPath).fileName();
+    if (QFileInfo::exists(absoluteFolderPath + QStringLiteral("/.git"))) {
+        const QString repo = gitRepoName(absoluteFolderPath);
+        if (!repo.isEmpty())
+            return repo;
+    }
+    return base;
 }
 
 QModelIndex QmlTreeModel::indexForItem(QmlTreeItem *item) const
@@ -85,19 +159,22 @@ QmlTreeItem *QmlTreeModel::ensureFolder(const QString &absoluteFolderPath)
     const QString abs = QDir::cleanPath(absoluteFolderPath);
     const QString root = m_rootPath.isEmpty() ? abs : QDir::cleanPath(m_rootPath);
 
+    // Everything hangs off the visible root node when there is one.
+    QmlTreeItem *baseParent = m_rootFolder ? m_rootFolder : rootItem;
+
+    // A project that *is* the root lives directly under the root node.
+    if (abs == root)
+        return baseParent;
+
     QString rel = QDir(root).relativeFilePath(abs);
     if (rel == QLatin1String(".") || rel.isEmpty())
-        rel = QFileInfo(root).fileName();
+        return baseParent;
 
     const QStringList parts = rel.split(QLatin1Char('/'), Qt::SkipEmptyParts);
-    QmlTreeItem *parent = rootItem;
+    QmlTreeItem *parent = baseParent;
 
     for (int i = 0; i < parts.size(); ++i) {
-        const QString currentAbs = QDir::cleanPath(root + QLatin1Char('/') + parts.mid(0, i + 1).join(QLatin1Char('/')));
-        // When abs == root, root + '/' + basename != root; normalize to root
-        const QString wantAbs = (QDir::cleanPath(abs) == root && i == parts.size() - 1)
-            ? root
-            : currentAbs;
+        const QString wantAbs = QDir::cleanPath(root + QLatin1Char('/') + parts.mid(0, i + 1).join(QLatin1Char('/')));
 
         QmlTreeItem *child = nullptr;
         for (QmlTreeItem *c : parent->m_children) {
@@ -111,7 +188,7 @@ QmlTreeItem *QmlTreeModel::ensureFolder(const QString &absoluteFolderPath)
             const int row = parent->childCount();
             beginInsertRows(parentIdx, row, row);
             child = new QmlTreeItem(QmlTreeItem::Folder, parent);
-            child->m_name = parts[i];
+            child->m_name = folderDisplayName(wantAbs);
             child->m_path = wantAbs;
             parent->appendChild(child);
             endInsertRows();
@@ -126,6 +203,7 @@ void QmlTreeModel::clear()
     beginResetModel();
     delete rootItem;
     rootItem = new QmlTreeItem(QmlTreeItem::Folder);
+    m_rootFolder = nullptr;
     endResetModel();
 }
 

@@ -12,10 +12,14 @@
         <file>qml/IconButton.qml</file>
         <file>qml/StatCard.qml</file>
         <file>qml/DetailPage.qml</file>
+        <file>qml/ConsoleFormat.js</file>
+        <file>qml/ToolPlugins.js</file>
         <file>qml/ProgressRing.qml</file>
         <file>qml/RunConfigDialog.qml</file>
         <file>qml/McpSetupDialog.qml</file>
         <file>qml/TrafficLights.qml</file>
+        <file>qml/DatabasesPage.qml</file>
+        <file>qml/DockerPage.qml</file>
     </qresource>
     <qresource prefix="/icons">
         <file>assets/icons/cmake-32px.png</file>
@@ -29,6 +33,11 @@
         <file>assets/icons/square-menu-dark.png</file>
         <file>assets/icons/rotate-cw.png</file>
         <file>assets/icons/rotate-cw-light.png</file>
+        <file>assets/icons/rotate-cw-dark.png</file>
+        <file>assets/icons/run-all.png</file>
+        <file>assets/icons/run-all-dark.png</file>
+        <file>assets/icons/stop-all.png</file>
+        <file>assets/icons/stop-all-dark.png</file>
         <file>assets/icons/go-dark-32px.png</file>
         <file>assets/icons/go-light-32px.png</file>
         <file>assets/icons/gradle-32px.png</file>
@@ -45,13 +54,29 @@
         <file>assets/icons/brush-cleaning-dark.png</file>
         <file>assets/icons/cog.png</file>
         <file>assets/icons/cog-dark.png</file>
+        <file>assets/icons/dashboard.png</file>
+        <file>assets/icons/dashboard-dark.png</file>
         <file>assets/icons/chevron-down.png</file>
         <file>assets/icons/chevron-down-dark.png</file>
         <file>assets/icons/chevron-up.png</file>
         <file>assets/icons/chevron-up-dark.png</file>
+        <file>assets/icons/chevron-right.png</file>
+        <file>assets/icons/chevron-right-dark.png</file>
         <file>assets/icons/terminal-light-32px.png</file>
         <file>assets/icons/terminal-dark-32px.png</file>
         <file>assets/icons/mcp-light-32px.png</file>
         <file>assets/icons/mcp-dark-32px.png</file>
+        <file>assets/icons/postgresql-32px.png</file>
+        <file>assets/icons/mysql-wordmark-32px.png</file>
+        <file>assets/icons/mongodb-32px.png</file>
+        <file>assets/icons/docker-32px.png</file>
+        <file>assets/icons/postgresql-badge-64px.png</file>
+        <file>assets/icons/mysql-64px.png</file>
+        <file>assets/icons/mongodb-64px.png</file>
+        <file>assets/icons/redis-64px.png</file>
+        <file>assets/icons/database.png</file>
+        <file>assets/icons/database-dark.png</file>
+        <file>assets/icons/docker.png</file>
+        <file>assets/icons/docker-dark.png</file>
     </qresource>
 </RCC>

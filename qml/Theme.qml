@@ -37,4 +37,33 @@ QtObject {
     readonly property color border: isDark ? "#242422" : "#e8e8e3"
     // ring
     readonly property color ring: isDark ? "#abab9c" : "#7c7c67"
+
+    // ─── Layout scale ──────────────────────────────────────────────────
+    // Single source of truth for spacing/sizing so paddings stay uniform.
+    readonly property int spacingXs: 4
+    readonly property int spacingSm: 8
+    readonly property int spacingMd: 12
+    readonly property int spacingLg: 16
+    readonly property int spacingXl: 24
+
+    readonly property int radiusSm: 6
+    readonly property int radiusMd: 8
+    readonly property int radiusLg: 10
+
+    readonly property int iconSm: 16
+    readonly property int iconMd: 20
+    readonly property int iconLg: 24
+    readonly property int iconXs: 12
+
+    // Sidebar geometry (shared by the sidebar and the main window layout)
+    readonly property int sidebarWidth: 240
+    readonly property int sidebarInset: 16     // left rail for titles and list
+    readonly property int sidebarIndent: 16    // per-level tree indent
+    readonly property int sidebarRowHeight: 28
+    readonly property int titleBarHeight: 48
+
+    // Typography
+    readonly property int fontSizeSm: 11
+    readonly property int fontSizeMd: 12
+    readonly property int fontSizeLg: 13
 }

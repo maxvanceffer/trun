@@ -5,6 +5,8 @@
 #include "commandexecutor.h"
 #include "logmodel.h"
 #include "mcpagents.h"
+#include "settings.h"
+#include <QSignalSpy>
 #include <QQmlEngine>
 #include <QQmlComponent>
 #include <QQmlContext>
@@ -25,6 +27,8 @@ LogModel* g_logModel = nullptr;
 ProjectListModel* g_projectListModel = nullptr;
 ProjectService* g_projectService = nullptr;
 
+static QString sourceQmlPath(const QString &fileName);
+
 void QmlTests::test_tree_model_creation()
 {
     QmlTreeModel model;
@@ -44,10 +48,15 @@ void QmlTests::test_add_project_package_json()
         QVariant()
     );
 
-    // One top-level folder "npm-project" holding the project
+    // Visible root node "test", then one folder "npm-project" holding the project
     QCOMPARE(model.rowCount(), 1);
 
-    QModelIndex folderIdx = model.index(0, 0);
+    QModelIndex rootIdx = model.index(0, 0);
+    QVERIFY(rootIdx.isValid());
+    QCOMPARE(model.data(rootIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
+    QCOMPARE(model.rowCount(rootIdx), 1);
+
+    QModelIndex folderIdx = model.index(0, 0, rootIdx);
     QVERIFY(folderIdx.isValid());
     QCOMPARE(model.data(folderIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
     QCOMPARE(model.rowCount(folderIdx), 1);
@@ -77,7 +86,11 @@ void QmlTests::test_add_project_cargo_toml()
 
     QCOMPARE(model.rowCount(), 1);
 
-    QModelIndex folderIdx = model.index(0, 0);
+    QModelIndex rootIdx = model.index(0, 0);
+    QVERIFY(rootIdx.isValid());
+    QCOMPARE(model.rowCount(rootIdx), 1);
+
+    QModelIndex folderIdx = model.index(0, 0, rootIdx);
     QVERIFY(folderIdx.isValid());
     QCOMPARE(model.rowCount(folderIdx), 1);
 
@@ -100,10 +113,14 @@ void QmlTests::test_add_folder_implicit()
         QVariant()
     );
 
-    // Root should have 1 folder ("myfolder")
+    // Visible root, then 1 folder ("myfolder")
     QCOMPARE(model.rowCount(), 1);
 
-    QModelIndex myfolderIdx = model.index(0, 0);
+    QModelIndex rootIdx = model.index(0, 0);
+    QVERIFY(rootIdx.isValid());
+    QCOMPARE(model.rowCount(rootIdx), 1);
+
+    QModelIndex myfolderIdx = model.index(0, 0, rootIdx);
     QVERIFY(myfolderIdx.isValid());
     QCOMPARE(model.data(myfolderIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
     QCOMPARE(model.rowCount(myfolderIdx), 1);
@@ -140,9 +157,13 @@ void QmlTests::test_folder_with_child_project()
         QVariant()
     );
 
-    QCOMPARE(model.rowCount(), 1); // one folder "backend"
+    QCOMPARE(model.rowCount(), 1); // visible root
 
-    QModelIndex folderIdx = model.index(0, 0);
+    QModelIndex rootIdx = model.index(0, 0);
+    QVERIFY(rootIdx.isValid());
+    QCOMPARE(model.rowCount(rootIdx), 1); // one folder "backend"
+
+    QModelIndex folderIdx = model.index(0, 0, rootIdx);
     QVERIFY(folderIdx.isValid());
     QCOMPARE(model.data(folderIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
     QCOMPARE(model.rowCount(folderIdx), 2);
@@ -304,6 +325,167 @@ void QmlTests::test_console_shows_selected_command()
     QCOMPARE(messages(), QStringList({"build-line", "build-line-2"}));
 }
 
+void QmlTests::test_console_format_colors()
+{
+    QQmlEngine engine;
+    const QString jsUrl = QUrl::fromLocalFile(sourceQmlPath("ConsoleFormat.js")).toString();
+    const QString qml = QStringLiteral("import QtQml\nimport \"%1\" as CF\nQtObject {\n"
+        "property string plain: CF.formatLine(\"09:00:00.000\", \"dev\", \"hello\", \"#fff\")\n"
+        "property string colored: CF.ansiToHtml(\"\\u001b[31mred\\u001b[0m ok\")\n"
+        "property string escaped: CF.formatLine(\"t\", \"<x>\", \"a&b\", \"#fff\")\n"
+        "}").arg(jsUrl);
+    QQmlComponent component(&engine);
+    component.setData(qml.toUtf8(), QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+    QObject *obj = component.create();
+    QVERIFY(obj != nullptr);
+    QScopedPointer<QObject> guard(obj);
+
+    const QString plain = obj->property("plain").toString();
+    QVERIFY(plain.contains(QStringLiteral("[09:00:00.000]")));
+    QVERIFY(plain.contains(QStringLiteral("dev:")));
+    QVERIFY(plain.contains(QStringLiteral("hello")));
+    const QString colored = obj->property("colored").toString();
+    QVERIFY(colored.contains(QStringLiteral("color:#ef4444")));
+    QVERIFY(colored.contains(QStringLiteral("red")));
+    QVERIFY(colored.contains(QStringLiteral("ok")));
+    QVERIFY(!colored.contains(QStringLiteral("\x1b")));
+    const QString escaped = obj->property("escaped").toString();
+    QVERIFY(escaped.contains(QStringLiteral("&lt;x&gt;")));
+    QVERIFY(escaped.contains(QStringLiteral("a&amp;b")));
+}
+
+void QmlTests::test_tool_plugins()
+{
+    QQmlEngine engine;
+    const QString jsUrl = QUrl::fromLocalFile(sourceQmlPath("ToolPlugins.js")).toString();
+    const QString qml = QStringLiteral("import QtQml\nimport \"%1\" as TP\nQtObject {\n"
+        "property var vitePkg: TP.pluginFor(\"vite\", \"package.json\")\n"
+        "property var viteComposer: TP.pluginFor(\"vite\", \"composer.json\")\n"
+        "property var symfony: TP.pluginFor(\"symfony\", \"composer.json\")\n"
+        "property var unknown: TP.pluginFor(\"webpack\", \"package.json\")\n"
+        "property var empty: TP.pluginFor(\"\", \"package.json\")\n"
+        "property var viteHit: TP.matchBusy(TP.busyTriggers(TP.pluginFor(\"vite\", \"package.json\")), \"Port 5173 is in use, trying another one...\")\n"
+        "property var genericHit: TP.matchBusy(TP.busyTriggers(null), \"Error: listen EADDRINUSE: address already in use :::3000\")\n"
+        "property var missHit: TP.matchBusy(TP.busyTriggers(null), \"Server started ok\")\n"
+        "property int listenBull: TP.matchListening(\"Bull admin listening on port 8040\")\n"
+        "property int listenSymfony: TP.matchListening(\"Listening on https://127.0.0.1:8000\")\n"
+        "property int listenNone: TP.matchListening(\"Error: connect ECONNREFUSED 127.0.0.1:6379\")\n"
+        "property string stripped: TP.stripSgr(\"a\\u001b[31mb\\u001b[0mc\")\n"
+        "property var refused: TP.parseRefused(\"Error: connect ECONNREFUSED 127.0.0.1:6379\")\n"
+        "property var refusedNone: TP.parseRefused(\"Server started ok\")\n"
+        "property string svcRedis: TP.serviceName(6379)\n"
+        "property string svcUnknown: TP.serviceName(1234)\n"
+        "property var lineOwned: TP.matchLine(\"vite\", \"package.json\", \"Port 5173 is in use, trying another one...\")\n"
+        "property var lineProxy: TP.matchLine(\"\", \"package.json\", \"Port 5173 is in use, trying another one...\")\n"
+        "property var lineWrongManifest: TP.matchLine(\"\", \"composer.json\", \"Port 5173 is in use, trying another one...\")\n"
+        "property var lineOwnedGeneric: TP.matchLine(\"vite\", \"package.json\", \"Error: listen EADDRINUSE: address already in use :::3000\")\n"
+        "}").arg(jsUrl);
+    QQmlComponent component(&engine);
+    component.setData(qml.toUtf8(), QUrl());
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+    QObject *obj = component.create();
+    QVERIFY(obj != nullptr);
+    QScopedPointer<QObject> guard(obj);
+
+    // Ownership: vite only for package.json, symfony for composer.json
+    QCOMPARE(obj->property("vitePkg").toMap().value("id").toString(), QString("vite"));
+    QVERIFY(obj->property("viteComposer").isNull());
+    QCOMPARE(obj->property("symfony").toMap().value("id").toString(), QString("symfony"));
+    QVERIFY(obj->property("unknown").isNull());
+    QVERIFY(obj->property("empty").isNull());
+
+    // Triggers: vite busy line carries its port, generic does not
+    const QVariantMap viteHit = obj->property("viteHit").toMap();
+    QVERIFY(viteHit.value("matched").toBool());
+    QCOMPARE(viteHit.value("port").toInt(), 5173);
+    const QVariantMap genericHit = obj->property("genericHit").toMap();
+    QVERIFY(genericHit.value("matched").toBool());
+    QCOMPARE(genericHit.value("port").toInt(), 0);
+    QVERIFY(!obj->property("missHit").toMap().value("matched").toBool());
+
+    // Sniffing incl. host-less form, excluding client errors
+    QCOMPARE(obj->property("listenBull").toInt(), 8040);
+    QCOMPARE(obj->property("listenSymfony").toInt(), 8000);
+    QCOMPARE(obj->property("listenNone").toInt(), 0);
+    QCOMPARE(obj->property("stripped").toString(), QString("abc"));
+
+    // Line ownership: owned command, proxied script, wrong manifest
+    const QVariantMap lineOwned = obj->property("lineOwned").toMap();
+    QVERIFY(lineOwned.value("tool").toBool());
+    QCOMPARE(lineOwned.value("plugin").toMap().value("id").toString(), QString("vite"));
+    QCOMPARE(lineOwned.value("hit").toMap().value("port").toInt(), 5173);
+    const QVariantMap lineProxy = obj->property("lineProxy").toMap();
+    QVERIFY(lineProxy.value("tool").toBool());
+    QCOMPARE(lineProxy.value("plugin").toMap().value("id").toString(), QString("vite"));
+    const QVariantMap lineWrongManifest = obj->property("lineWrongManifest").toMap();
+    QVERIFY(!lineWrongManifest.value("hit").toMap().value("matched").toBool());
+    // Generic trigger on an owned command: no tool hint
+    const QVariantMap lineOwnedGeneric = obj->property("lineOwnedGeneric").toMap();
+    QVERIFY(lineOwnedGeneric.value("hit").toMap().value("matched").toBool());
+    QVERIFY(!lineOwnedGeneric.value("tool").toBool());
+
+    // Refused dependencies with well-known service names
+    const QVariantMap refused = obj->property("refused").toMap();
+    QCOMPARE(refused.value("host").toString(), QString("127.0.0.1"));
+    QCOMPARE(refused.value("port").toInt(), 6379);
+    QVERIFY(obj->property("refusedNone").isNull());
+    QCOMPARE(obj->property("svcRedis").toString(), QString("Redis"));
+    QVERIFY(obj->property("svcUnknown").toString().isEmpty());
+}
+
+void QmlTests::test_dep_offer_opens_dialog()
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("projectService", g_projectService);
+    engine.rootContext()->setContextProperty("logModel", g_logModel);
+    LogModel commandLog;
+    engine.rootContext()->setContextProperty("commandLog", &commandLog);
+    static CommandExecutor commandExecutor;
+    engine.rootContext()->setContextProperty("commandExecutor", &commandExecutor);
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(QDir::currentPath() + "/icons/").toString());
+    // NOTE: no databaseService here on purpose — the offer is decided by
+    // the log line alone, with no service lookup involved.
+
+    QObject *obj = loadDashboard(engine, QDir::currentPath());
+    QVERIFY(obj != nullptr);
+    QScopedPointer<QObject> guard(obj);
+
+    QQuickItem *detailPage = obj->findChild<QQuickItem*>(QStringLiteral("detailPage"));
+    QVERIFY(detailPage != nullptr);
+    QVERIFY(obj->setProperty("activePage", QStringLiteral("detail")));
+    QVariant key;
+    QVERIFY(QMetaObject::invokeMethod(obj, "fullKey",
+        Q_RETURN_ARG(QVariant, key),
+        Q_ARG(QVariant, QVariant(QStringLiteral("npm:dev")))));
+    QVERIFY(detailPage->setProperty("commandId", key));
+
+    // Refused Redis line → dialog, props straight from the line
+    QVariantMap refused{{QStringLiteral("host"), QStringLiteral("127.0.0.1")},
+                        {QStringLiteral("port"), 6379}};
+    QVariant ret;
+    QVERIFY(QMetaObject::invokeMethod(obj, "offerRefusedRun",
+        Q_RETURN_ARG(QVariant, ret),
+        Q_ARG(QVariant, key),
+        Q_ARG(QVariant, QVariant::fromValue(refused))));
+    QVERIFY2(ret.toBool(), "refused offer must open from the log line alone");
+    QCOMPARE(detailPage->property("depHost").toString(), QString("127.0.0.1"));
+    QCOMPARE(detailPage->property("depPort").toInt(), 6379);
+    QCOMPARE(detailPage->property("depSvc").toString(), QString("Redis"));
+
+    // Off the detail page: no dialog, hint path instead
+    QVERIFY(obj->setProperty("activePage", QStringLiteral("dashboard")));
+    QVariant ret2;
+    QVERIFY(QMetaObject::invokeMethod(obj, "offerRefusedRun",
+        Q_RETURN_ARG(QVariant, ret2),
+        Q_ARG(QVariant, key),
+        Q_ARG(QVariant, QVariant::fromValue(refused))));
+    QVERIFY(!ret2.toBool());
+}
+
 static QString sourceQmlPath(const QString &fileName)
 {
     const QString buildDir = QDir::currentPath();
@@ -337,6 +519,24 @@ void QmlTests::test_sniff_detects_port_from_url()
     const QVariantMap ports = obj->property("detectedPorts").toMap();
     // No active project in this harness: key is "|npm:serve"
     QCOMPARE(ports.value(QStringLiteral("|npm:serve")).toInt(), 5173);
+
+    // Symfony CLI "Listening on" form, incl. schemeless host:port
+    QVERIFY(QMetaObject::invokeMethod(obj, "appendCommandLine",
+        Q_ARG(QVariant, QVariant(QStringLiteral("composer:serve"))),
+        Q_ARG(QVariant, QVariant(QStringLiteral("stdout"))),
+        Q_ARG(QVariant, QVariant(QStringLiteral("t"))),
+        Q_ARG(QVariant, QVariant(QStringLiteral("Listening on 127.0.0.1:8000")))));
+    const QVariantMap ports2 = obj->property("detectedPorts").toMap();
+    QCOMPARE(ports2.value(QStringLiteral("|composer:serve")).toInt(), 8000);
+
+    // Bull-style "listening on port N" with no host at all
+    QVERIFY(QMetaObject::invokeMethod(obj, "appendCommandLine",
+        Q_ARG(QVariant, QVariant(QStringLiteral("npm:dev"))),
+        Q_ARG(QVariant, QVariant(QStringLiteral("stdout"))),
+        Q_ARG(QVariant, QVariant(QStringLiteral("t"))),
+        Q_ARG(QVariant, QVariant(QStringLiteral("Bull admin listening on port 8040")))));
+    const QVariantMap ports3 = obj->property("detectedPorts").toMap();
+    QCOMPARE(ports3.value(QStringLiteral("|npm:dev")).toInt(), 8040);
 }
 
 void QmlTests::test_detail_page_loads()
@@ -582,7 +782,7 @@ void QmlTests::test_dashboard_layout_geometry()
     QVERIFY(dashboard != nullptr);
     dashboard->setParentItem(&host);
 
-    // Empty state: nothing selected -> grid with header only, detail hidden
+    // Layout sanity: nothing selected, no activity yet
     QTest::qWait(50);
     dumpGeometry(dashboard);
 
@@ -590,23 +790,26 @@ void QmlTests::test_dashboard_layout_geometry()
     QVERIFY(gridView != nullptr);
     QQuickItem *detailPage = dashboard->findChild<QQuickItem*>("detailPage");
     QVERIFY(detailPage != nullptr);
-    QVERIFY(!detailPage->isVisible());
+    QVERIFY(!detailPage->isEnabled());
 
-    // Anchor-based sections: header, commands (no vertical layout engine)
-    QVERIFY(gridView->childItems().size() >= 2);
     QQuickItem *header = gridView->childItems().at(0);
-    QQuickItem *commands = gridView->childItems().at(1);
+    QQuickItem *stats = gridView->findChild<QQuickItem*>("systemStatsRow");
+    QQuickItem *activity = gridView->findChild<QQuickItem*>("activityView");
+    QVERIFY(stats != nullptr);
+    QVERIFY(activity != nullptr);
 
-    // Header pinned to the top with 48px height
+    // Header pinned to the top with 48px height; stats in the page body
     QCOMPARE(header->y(), 0.0);
     QCOMPARE(header->height(), 48.0);
+    QVERIFY(stats->height() > 0.0);
 
-    // Empty state: commands collapsed below the header with a margin
-    QCOMPARE(commands->y(), 56.0);
-    QCOMPARE(commands->height(), 0.0);
+    // Activity view sits below the stats with a 24px gap
+    QCOMPARE(activity->y(), stats->y() + stats->height() + 24.0);
 
-    // Now with a project that has commands: commands section becomes visible
-    // below the header, header stays pinned to the top
+    // Nothing recent, nothing running: empty state is shown
+    QVERIFY(obj->property("activityEmpty").toBool());
+
+    // Scanning a project keeps the header/stats pinned
     QTemporaryDir tmp;
     QVERIFY(tmp.isValid());
     QDir().mkpath(tmp.path() + "/app");
@@ -623,84 +826,229 @@ void QmlTests::test_dashboard_layout_geometry()
 
     QCOMPARE(header->y(), 0.0);
     QCOMPARE(header->height(), 48.0);
-    QCOMPARE(commands->y(), 56.0);
-    QVERIFY(commands->height() > 0.0);
+    QCOMPARE(activity->y(), stats->y() + stats->height() + 24.0);
 
-    // All command cards share one size across grid rows
-    QQuickItem *grid = nullptr;
-    for (auto *c : commands->childItems()) {
-        if (QString(c->metaObject()->className()).contains("GridLayout")) {
-            grid = c;
-            break;
-        }
-    }
-    QVERIFY2(grid != nullptr, "commands GridLayout not found");
-    QList<QQuickItem *> cards;
-    for (auto *c : grid->childItems()) {
-        // QML delegates are named <FileName>_QMLTYPE_*; skip the Repeater itself
-        if (QString(c->metaObject()->className()).contains("CommandCard"))
-            cards << c;
-    }
-    QCOMPARE(cards.size(), 4);
-    const qreal cardW = cards.first()->width();
-    const qreal cardH = cards.first()->height();
-    QVERIFY(cardW > 0.0 && cardH > 0.0);
-    // Cards must fit content + margins (collapsed layout ~= button height only)
-    QVERIFY2(cardH >= 40.0, qPrintable(QString("card too short: %1").arg(cardH)));
-    // Card content must fit exactly: layout height == its implicit height,
-    // otherwise children overflow the card (regression guard)
-    QQuickItem *firstLayout = nullptr;
-    {
-        QList<QQuickItem *> stack{cards.first()};
-        while (!stack.isEmpty() && firstLayout == nullptr) {
-            QQuickItem *cur = stack.takeFirst();
-            if (QString(cur->metaObject()->className()).contains("ColumnLayout")) {
-                firstLayout = cur;
-                break;
-            }
-            for (auto *c : cur->childItems())
-                stack << c;
-        }
-    }
-    QVERIFY(firstLayout != nullptr);
-    QCOMPARE(firstLayout->height(), firstLayout->implicitHeight());
-    for (auto *card : cards) {
-        QCOMPARE(card->width(), cardW);
-        QCOMPARE(card->height(), cardH);
-    }
+    // Navigation: selecting a project switches to the project page
+    QVERIFY(QMetaObject::invokeMethod(obj, "openProject"));
+    QCOMPARE(obj->property("activePage").toString(), QString("project"));
+    QVERIFY(QMetaObject::invokeMethod(obj, "goHome"));
+    QCOMPARE(obj->property("activePage").toString(), QString("dashboard"));
 
-    // Click path: card -> dashboard.selectCommand -> selected border.
-    // Selection keys are project-scoped ("<projectId>|<cmdId>").
-    QQuickItem *firstCard = cards.first();
+    // Detail page: opens with a slide, closes back to hidden
     const QString expectedId = g_projectService->projects().first()["commands"]
         .toArray().first().toObject()["id"].toString();
     QVERIFY(!expectedId.isEmpty());
     const QString expectedKey =
         g_projectService->projects().first()["id"].toString() + u'|' + expectedId;
-    QVERIFY(QMetaObject::invokeMethod(firstCard, "selectThis"));
-    QTest::qWait(20);
-    QCOMPARE(obj->property("selectedCommandId").toString(), expectedKey);
-    QVERIFY(firstCard->property("selected").toBool());
 
-    // Detail page: opens with a slide, closes back to hidden
+    // Port parsing for the "port busy / Kill & Run" prompt
+    {
+        QVariant ret;
+        QVERIFY(QMetaObject::invokeMethod(obj, "portFromError",
+            Q_RETURN_ARG(QVariant, ret),
+            Q_ARG(QVariant, QVariant(QStringLiteral(
+                "Error: listen EADDRINUSE: address already in use 0.0.0.0:8050")))));
+        QCOMPARE(ret.toInt(), 8050);
+        QVERIFY(QMetaObject::invokeMethod(obj, "portFromError",
+            Q_RETURN_ARG(QVariant, ret),
+            Q_ARG(QVariant, QVariant(QStringLiteral("  port: 3000")))));
+        QCOMPARE(ret.toInt(), 3000);
+    }
+
     QVERIFY(QMetaObject::invokeMethod(obj, "openDetail", Q_ARG(QVariant, QVariant(expectedId))));
-    // Starts off-screen with the slide-in engaged (anchors must not own x:
-    // the old anchors.fill made the open snap instantly instead of sliding)
-    QCOMPARE(detailPage->x(), 960.0);
-    QObject *slideIn = dashboard->findChild<QObject*>("slideIn");
-    QVERIFY(slideIn != nullptr);
-    QVERIFY(slideIn->property("running").toBool());
-    QTest::qWait(500);
+    // Detail is a page like the others (cross-slide, no separate overlay)
+    QCOMPARE(obj->property("activePage").toString(), QString("detail"));
     QCOMPARE(obj->property("detailCommandId").toString(), expectedKey);
-    QVERIFY(detailPage->isVisible());
-    // Slide-in needs render-loop ticks (absent headless), so the final x
-    // is only asserted via running above; the real app docks it on screen.
-    // Slide-out needs render-loop ticks (absent headless), so assert that
-    // closeDetail starts the animation; the real app finishes it on screen.
-    QObject *slideOut = dashboard->findChild<QObject*>("slideOut");
-    QVERIFY(slideOut != nullptr);
+
+    // Regression guard: the command's default args must be loaded into the
+    // run config, otherwise Run launches the bare executable (e.g. "npm").
+    QTest::qWait(50);
+    QVERIFY2(!detailPage->property("cfgArgsText").toString().isEmpty(),
+             qPrintable(QString("run args not loaded (cfgArgsText empty)")));
+
     QVERIFY(QMetaObject::invokeMethod(obj, "closeDetail"));
-    QVERIFY(slideOut->property("running").toBool());
+    QCOMPARE(obj->property("activePage").toString(), QString("dashboard"));
+    QCOMPARE(obj->property("detailCommandId").toString(), QString(""));
+}
+
+void QmlTests::test_run_all_recent()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    QVERIFY(QDir().mkpath(tmp.path() + "/app"));
+    QFile manifest(tmp.path() + "/app/package.json");
+    QVERIFY(manifest.open(QIODevice::WriteOnly));
+    manifest.write(R"({"name":"probe","scripts":{"serve":"vite"}})");
+    manifest.close();
+
+    Settings settings(tmp.path() + "/trun.ini");
+    ProjectListModel model;
+    ProjectService service(&model);
+    service.setSettings(&settings);
+    CommandExecutor executor;
+    service.setExecutor(&executor);
+    service.scanFolder(tmp.path());
+    QVERIFY(service.projectCount() > 0);
+
+    const QString folder = tmp.path() + "/app";
+    const QString result = service.addCustomCommand(
+        QStringLiteral("work"), folder, QStringLiteral("/bin/sleep"),
+        QStringLiteral("30"), QStringLiteral(""), QStringLiteral(""), false);
+    QVERIFY(!result.isEmpty());
+    const QString projectId = result.split(u'|').first();
+    const QString commandId = result.split(u'|').last();
+
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("projectService", &service);
+    engine.rootContext()->setContextProperty("logModel", g_logModel);
+    static LogModel commandLog;
+    engine.rootContext()->setContextProperty("commandLog", &commandLog);
+    engine.rootContext()->setContextProperty("commandExecutor", &executor);
+    QString buildDir = QDir::currentPath();
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(buildDir + "/icons/").toString());
+    QString qmlPath = QDir::cleanPath(buildDir + "/../qml/Dashboard.qml");
+    if (!QFile::exists(qmlPath))
+        qmlPath = buildDir + "/qml/Dashboard.qml";
+
+    QQmlComponent component(&engine, QUrl::fromLocalFile(qmlPath));
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+
+    QQuickItem host;
+    host.setWidth(960);
+    host.setHeight(800);
+    QObject *obj = component.createWithInitialProperties({}, engine.rootContext());
+    QVERIFY(obj != nullptr);
+    auto *dashboard = qobject_cast<QQuickItem *>(obj);
+    QVERIFY(dashboard != nullptr);
+    dashboard->setParentItem(&host);
+
+    QSignalSpy startedSpy(&executor, &CommandExecutor::started);
+    QVERIFY(service.runCommandEffective(projectId, commandId));
+    QVERIFY2(startedSpy.wait(5000), "seed start never arrived");
+    QTRY_COMPARE(service.recentCommands().size(), 1);
+    executor.killAll();
+    QTRY_COMPARE(service.runningCommands().size(), 0);
+    startedSpy.clear();
+
+    QVERIFY(obj->property("hasRecents").toBool());
+    QVERIFY(QMetaObject::invokeMethod(obj, "runAllRecent"));
+    QVERIFY2(startedSpy.wait(5000), "runAllRecent did not start commands");
+    QVERIFY(service.runningCommands().size() > 0);
+    executor.killAll();
+    delete obj;
+}
+
+// Canned docker daemon for DockerPage geometry tests (no daemon needed).
+class FakeDockerService : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantMap engine READ engine CONSTANT)
+    Q_PROPERTY(QVariantList containers READ containers CONSTANT)
+    Q_PROPERTY(QVariantList images READ images CONSTANT)
+    Q_PROPERTY(QVariantMap disk READ disk CONSTANT)
+    Q_PROPERTY(QVariantMap stats READ stats CONSTANT)
+    Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+
+public:
+    explicit FakeDockerService(QObject *parent = nullptr) : QObject(parent) {}
+
+    QVariantMap engine() const
+    {
+        return QVariantMap{{QStringLiteral("available"), true},
+                           {QStringLiteral("version"), QStringLiteral("99.0")},
+                           {QStringLiteral("context"), QStringLiteral("colima")},
+                           {QStringLiteral("runtime"), QStringLiteral("colima")},
+                           {QStringLiteral("colimaInstalled"), true},
+                           {QStringLiteral("colimaRunning"), true}};
+    }
+    QVariantList containers() const
+    {
+        return QVariantList{
+            QVariantMap{{QStringLiteral("id"), QStringLiteral("abc123")},
+                        {QStringLiteral("name"), QStringLiteral("web")},
+                        {QStringLiteral("image"), QStringLiteral("nginx:latest")},
+                        {QStringLiteral("status"), QStringLiteral("Up 2 hours")},
+                        {QStringLiteral("running"), true},
+                        {QStringLiteral("ports"), QStringLiteral("0.0.0.0:8080->80/tcp")},
+                        {QStringLiteral("project"), QStringLiteral("")}}};
+    }
+    QVariantList images() const
+    {
+        return QVariantList{
+            QVariantMap{{QStringLiteral("id"), QStringLiteral("def456")},
+                        {QStringLiteral("repository"), QStringLiteral("nginx")},
+                        {QStringLiteral("tag"), QStringLiteral("latest")},
+                        {QStringLiteral("size"), QStringLiteral("74.5MB")},
+                        {QStringLiteral("created"), QStringLiteral("yesterday")}}};
+    }
+    QVariantMap disk() const { return {}; }
+    QVariantMap stats() const { return {}; }
+    bool busy() const { return false; }
+
+    Q_INVOKABLE void refresh() {}
+    Q_INVOKABLE void fetchLogs(const QString &, int) {}
+    Q_INVOKABLE void fetchStats() {}
+    Q_INVOKABLE bool prune() { return true; }
+    Q_INVOKABLE bool startContainer(const QString &) { return true; }
+    Q_INVOKABLE bool stopContainer(const QString &) { return true; }
+
+signals:
+    void busyChanged();
+    void logsReady(const QString &name, const QString &logs);
+    void errorMessage(const QString &message);
+};
+
+void QmlTests::test_docker_page_cards_span_width()
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("logModel", g_logModel);
+    FakeDockerService docker;
+    engine.rootContext()->setContextProperty("dockerService", &docker);
+    const QString buildDir = QDir::currentPath();
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(buildDir + "/icons/").toString());
+
+    QQmlComponent component(&engine,
+        QUrl::fromLocalFile(sourceQmlPath("DockerPage.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+
+    QQuickItem host;
+    host.setWidth(900);
+    host.setHeight(700);
+    QObject *obj = component.createWithInitialProperties({}, engine.rootContext());
+    QVERIFY(obj != nullptr);
+    auto *page = qobject_cast<QQuickItem *>(obj);
+    QVERIFY(page != nullptr);
+    page->setParentItem(&host);
+    // Production sizes the page via anchors.fill from Dashboard;
+    // the harness sets the geometry explicitly instead.
+    page->setWidth(900);
+    page->setHeight(700);
+    QTest::qWait(200);
+
+    // Regression guard: cards inside a ScrollView must span the viewport.
+    // `width: parent.width` on the content Column loops back to the
+    // contentItem's implicit minimum and collapses every card (~120px).
+    QQuickItem *engineCard = page->findChild<QQuickItem *>(QStringLiteral("engineCard"));
+    QVERIFY(engineCard != nullptr);
+    qDebug() << "engineCard width:" << engineCard->width();
+    QVERIFY2(engineCard->width() > 700.0,
+             qPrintable(QString("engine card collapsed to %1px").arg(engineCard->width())));
+
+    // Remove asks for confirmation: target props land on the dialog
+    QVERIFY(QMetaObject::invokeMethod(obj, "askRemove",
+        Q_ARG(QVariant, QVariant(QStringLiteral("image"))),
+        Q_ARG(QVariant, QVariant(QStringLiteral("def456"))),
+        Q_ARG(QVariant, QVariant(QStringLiteral("nginx:latest")))));
+    QObject *confirmDialog = obj->findChild<QObject *>(QStringLiteral("confirmDialog"));
+    QVERIFY(confirmDialog != nullptr);
+    QCOMPARE(confirmDialog->property("targetKind").toString(), QString("image"));
+    QCOMPARE(confirmDialog->property("targetId").toString(), QString("def456"));
+    QCOMPARE(confirmDialog->property("targetTitle").toString(), QString("nginx:latest"));
+
+    delete obj;
 }
 
 #include "qmltests.moc"

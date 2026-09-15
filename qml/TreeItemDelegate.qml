@@ -4,9 +4,9 @@ import QtQuick.Layouts 6.5
 
 Item {
     id: delegateRoot
-    height: 32
+    height: Theme.sidebarRowHeight
     implicitWidth: 200
-    implicitHeight: 32
+    implicitHeight: Theme.sidebarRowHeight
 
     // Assigned by TreeView (see Qt6 TreeView docs for custom delegates)
     required property TreeView treeView
@@ -26,6 +26,12 @@ Item {
 
     property bool isFolder: _type === "folder"
     property bool isProject: _type === "project"
+
+    // The single root node starts expanded so projects are visible.
+    Component.onCompleted: {
+        if (delegateRoot.isFolder && delegateRoot.depth === 0 && delegateRoot.hasChildren)
+            treeView.expand(row)
+    }
 
     signal projectClicked(string projectId)
     signal addCustomRequested(string folderPath)
@@ -56,14 +62,14 @@ Item {
         anchors.top: parent.top
         anchors.bottom: parent.bottom
         anchors.left: contentRow.left
-        anchors.leftMargin: -4
+        anchors.leftMargin: -Theme.spacingXs
         anchors.right: parent.right
         color: {
             if (mouseArea.pressed) return Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35)
             if (delegateRoot.isProject && treeView.selectedProjectId === delegateRoot._projectPath) return Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.25)
             return "transparent"
         }
-        radius: 6
+        radius: Theme.radiusSm
     }
 
     MouseArea {
@@ -87,32 +93,33 @@ Item {
     RowLayout {
         id: contentRow
         anchors.left: parent.left
-        anchors.leftMargin: depth * 20
+        anchors.leftMargin: depth * Theme.sidebarIndent
         anchors.right: parent.right
-        anchors.rightMargin: 4
+        anchors.rightMargin: Theme.spacingXs
         anchors.verticalCenter: parent.verticalCenter
-        spacing: 4
+        spacing: Theme.spacingXs
 
-        // Expand/collapse indicator for folders (zero size for leaves)
+        // Expand/collapse indicator for folders (zero size for leaves):
+        // chevron-right when collapsed, chevron-down when expanded.
         Image {
-            Layout.preferredWidth: (delegateRoot.isFolder && delegateRoot.hasChildren) ? 12 : 0
-            Layout.preferredHeight: (delegateRoot.isFolder && delegateRoot.hasChildren) ? 12 : 0
+            Layout.preferredWidth: (delegateRoot.isFolder && delegateRoot.hasChildren) ? Theme.iconXs : 0
+            Layout.preferredHeight: (delegateRoot.isFolder && delegateRoot.hasChildren) ? Theme.iconXs : 0
             Layout.alignment: Qt.AlignVCenter
             source: delegateRoot.expanded
-                ? iconBaseUrl + (Theme.isDark ? "chevron-up-dark.png" : "chevron-up.png")
-                : iconBaseUrl + (Theme.isDark ? "chevron-down-dark.png" : "chevron-down.png")
-            sourceSize.width: 16
-            sourceSize.height: 16
+                ? iconBaseUrl + (Theme.isDark ? "chevron-down-dark.png" : "chevron-down.png")
+                : iconBaseUrl + (Theme.isDark ? "chevron-right-dark.png" : "chevron-right.png")
+            sourceSize.width: Theme.iconSm
+            sourceSize.height: Theme.iconSm
             fillMode: Image.PreserveAspectFit
             smooth: true
             visible: delegateRoot.isFolder && delegateRoot.hasChildren
         }
 
-        // Icon (32px source, aspect-fitted into 16px box)
+        // Icon (32px source, aspect-fitted into a 16px box)
         Image {
-            Layout.preferredWidth: 16
-            Layout.preferredHeight: 16
-            Layout.leftMargin: 4
+            Layout.preferredWidth: Theme.iconSm
+            Layout.preferredHeight: Theme.iconSm
+            Layout.leftMargin: Theme.spacingXs
             source: iconSource
             sourceSize.width: 32
             sourceSize.height: 32
@@ -123,8 +130,8 @@ Item {
         // Name
         Label {
             text: delegateRoot.isFolder ? _folderName : _name
-            color: delegateRoot.isFolder ? Theme.textMuted : Theme.textPrimary
-            font.pixelSize: 12
+            color: Theme.textPrimary
+            font.pixelSize: Theme.fontSizeMd
             elide: Text.ElideRight
             Layout.fillWidth: true
         }
@@ -136,7 +143,7 @@ Item {
                 : ""
             color: Theme.textMuted
             font.pixelSize: 9
-            Layout.leftMargin: 4
+            Layout.leftMargin: Theme.spacingXs
             visible: delegateRoot.isProject && _commands && _commands.length > 0
         }
 

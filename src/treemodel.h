@@ -98,5 +98,11 @@ private:
     QmlTreeItem* rootItem;
     QString m_rootPath;
 
+    // Visible top-level node representing the chosen root folder.
+    QmlTreeItem* m_rootFolder = nullptr;
+
     QmlTreeItem* ensureFolder(const QString &absoluteFolderPath);
+
+    // Folder label: git repo name when the folder is a repo, else its name.
+    static QString folderDisplayName(const QString &absoluteFolderPath);
 };

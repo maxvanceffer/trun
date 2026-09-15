@@ -27,6 +27,9 @@ private slots:
     void test_qrc_icon_paths_in_qml();
     void test_sidebar_uses_theme();
     void test_console_shows_selected_command();
+    void test_console_format_colors();
+    void test_tool_plugins();
+    void test_dep_offer_opens_dialog();
     void test_sniff_detects_port_from_url();
     void test_detail_page_loads();
     void test_stat_card_loads();
@@ -34,4 +37,6 @@ private slots:
     void test_mcp_setup_dialog_loads();
     void test_mcp_menu_geometry();
     void test_dashboard_layout_geometry();
+    void test_docker_page_cards_span_width();
+    void test_run_all_recent();
 };

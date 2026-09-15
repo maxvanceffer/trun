@@ -1,72 +1,34 @@
-import QtQuick 6.5
+import QtQuick
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
 import QtQuick.Effects
-import QtQuick.Dialogs
 
 Rectangle {
     id: sidebar
-    width: 240
-    // Flat: no background of its own, melts into the root tint.
-    // (Native OS traffic lights sit top-left; nothing custom here.)
+    width: Theme.sidebarWidth
     color: "transparent"
 
     // Square when maximized, rounded outer corners otherwise
     readonly property int cornerR: (Window.visibility === Window.Maximized
-                                    || Window.visibility === Window.FullScreen) ? 0 : 10
+                                    || Window.visibility === Window.FullScreen) ? 0 : Theme.radiusLg
 
-    // Two-tone rounded backdrop: middle band + corner pieces.
-    // Each outer corner = content-tone square with a sidebar-tone
-    // circle over it, leaving a clean rounded notch.
+    // Frosted band: translucent over the native blur on macOS so the
+    // desktop shows through, solid theme tone elsewhere. The solid
+    // content surface on the right is what clips it to the sidebar.
     Rectangle {
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.topMargin: cornerR
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: cornerR
-        color: Theme.sidebarBackground
-    }
-
-    Rectangle {
-        x: 0
-        y: 0
-        width: cornerR
-        height: cornerR
-        color: Theme.windowBackground
-        visible: cornerR > 0
-    }
-
-    Rectangle {
-        x: 0
-        y: 0
-        width: cornerR * 2
-        height: cornerR * 2
-        radius: cornerR
-        color: Theme.sidebarBackground
-        visible: cornerR > 0
-    }
-
-    Rectangle {
-        x: 0
-        y: parent.height - cornerR
-        width: cornerR
-        height: cornerR
-        color: Theme.windowBackground
-        visible: cornerR > 0
-    }
-
-    Rectangle {
-        x: 0
-        y: parent.height - cornerR * 2
-        width: cornerR * 2
-        height: cornerR * 2
-        radius: cornerR
-        color: Theme.sidebarBackground
-        visible: cornerR > 0
+        anchors.fill: parent
+        topLeftRadius: sidebar.cornerR
+        bottomLeftRadius: sidebar.cornerR
+        color: Qt.platform.os === "osx"
+            ? Qt.rgba(Theme.sidebarBackground.r, Theme.sidebarBackground.g,
+                      Theme.sidebarBackground.b, Theme.isDark ? 0.62 : 0.55)
+            : Theme.sidebarBackground
     }
 
     signal projectSelected(string projectId)
+    signal dashboardRequested()
+    signal databasesRequested()
+    signal dockerRequested()
     signal mcpConfigureRequested()
     signal addCustomRequested(string folderPath)
     signal closeRequested()
@@ -87,57 +49,230 @@ Rectangle {
         anchors.top: parent.top
         anchors.left: parent.left
         anchors.right: parent.right
-        height: 48
+        height: Theme.titleBarHeight
         color: "transparent"
 
-        // Own traffic lights: untitled windows have no native ones.
+        // Own traffic lights: macOS uses the native ones kept by
+        // QWindowKit; other platforms draw their own.
         TrafficLights {
             id: trafficLights
             anchors.left: parent.left
             anchors.leftMargin: 12
             anchors.verticalCenter: parent.verticalCenter
+            visible: Qt.platform.os !== "osx"
             windowActive: Window.active
             onCloseRequested: sidebar.closeRequested()
             onMinimizeRequested: sidebar.minimizeRequested()
             onMaximizeRequested: sidebar.maximizeRequested()
         }
+    }
 
-        Label {
-            anchors.centerIn: parent
-            text: "PROJECTS"
-            font.pixelSize: 10
-            font.bold: true
-            color: Theme.textMuted
+    // Static Dashboard entry, always present above the project list.
+    Item {
+        id: dashboardRow
+        objectName: "dashboardRow"
+        anchors.top: header.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Theme.sidebarRowHeight
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.topMargin: 1
+            anchors.bottomMargin: 1
+            anchors.leftMargin: Theme.spacingSm
+            anchors.rightMargin: Theme.spacingSm
+            radius: Theme.radiusSm
+            color: dashMouse.pressed
+                ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35)
+                : (dashMouse.containsMouse
+                    ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                    : "transparent")
         }
 
-        // Root folder: pick a new one (or the same) to rescan everything
-        IconButton {
-            id: rootFolderButton
+        RowLayout {
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.sidebarInset
             anchors.right: parent.right
-            anchors.rightMargin: 8
+            anchors.rightMargin: Theme.sidebarInset
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: iconBaseUrl + "folder-32px.png"
-            tooltipText: qsTr("Change root folder & rescan")
-            onClicked: rootFolderPicker.open()
+            spacing: Theme.spacingSm
+
+            Image {
+                Layout.preferredWidth: Theme.iconSm
+                Layout.preferredHeight: Theme.iconSm
+                Layout.alignment: Qt.AlignVCenter
+                source: iconBaseUrl + (Theme.isDark ? "dashboard-dark.png" : "dashboard.png")
+                sourceSize.width: 32
+                sourceSize.height: 32
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                text: qsTr("Dashboard")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeMd
+                elide: Text.ElideRight
+            }
+        }
+
+        MouseArea {
+            id: dashMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sidebar.dashboardRequested()
         }
     }
 
-    FolderDialog {
-        id: rootFolderPicker
-        title: qsTr("Select Root Folder to Scan")
-        currentFolder: projectService.rootPath !== undefined
-            ? "file://" + projectService.rootPath : ""
+    // Static sections, right below Dashboard.
+    Item {
+        id: databasesHeader
+        objectName: "databasesHeader"
+        anchors.top: dashboardRow.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Theme.sidebarRowHeight
 
-        onAccepted: projectService.scanFolder(selectedFolder.toString())
+        Rectangle {
+            anchors.fill: parent
+            anchors.topMargin: 1
+            anchors.bottomMargin: 1
+            anchors.leftMargin: Theme.spacingSm
+            anchors.rightMargin: Theme.spacingSm
+            radius: Theme.radiusSm
+            color: databasesMouse.containsMouse
+                ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                : "transparent"
+        }
+
+        RowLayout {
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.sidebarInset
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.spacingSm
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.spacingSm
+
+            Image {
+                Layout.preferredWidth: Theme.iconSm
+                Layout.preferredHeight: Theme.iconSm
+                Layout.alignment: Qt.AlignVCenter
+                source: iconBaseUrl + (Theme.isDark ? "database-dark.png" : "database.png")
+                sourceSize.width: 32
+                sourceSize.height: 32
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                text: qsTr("Databases")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeMd
+                elide: Text.ElideRight
+            }
+        }
+
+        MouseArea {
+            id: databasesMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sidebar.databasesRequested()
+        }
+    }
+
+    Item {
+        id: dockerHeader
+        objectName: "dockerHeader"
+        anchors.top: databasesHeader.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Theme.sidebarRowHeight
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.topMargin: 1
+            anchors.bottomMargin: 1
+            anchors.leftMargin: Theme.spacingSm
+            anchors.rightMargin: Theme.spacingSm
+            radius: Theme.radiusSm
+            color: dockerMouse.containsMouse
+                ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                : "transparent"
+        }
+
+        RowLayout {
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.sidebarInset
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.spacingSm
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.spacingSm
+
+            Image {
+                Layout.preferredWidth: Theme.iconSm
+                Layout.preferredHeight: Theme.iconSm
+                Layout.alignment: Qt.AlignVCenter
+                source: iconBaseUrl + (Theme.isDark ? "docker-dark.png" : "docker.png")
+                sourceSize.width: 32
+                sourceSize.height: 32
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                text: qsTr("Docker")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeMd
+                elide: Text.ElideRight
+            }
+        }
+
+        MouseArea {
+            id: dockerMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sidebar.dockerRequested()
+        }
+    }
+
+    // Fixed section title above the dynamically added projects.
+    Item {
+        id: sectionHeader
+        anchors.top: dockerHeader.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Theme.sidebarRowHeight
+
+        Label {
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.sidebarInset
+            anchors.verticalCenter: parent.verticalCenter
+            text: qsTr("Projects")
+            color: Theme.textMuted
+            font.pixelSize: Theme.fontSizeSm
+            font.bold: true
+        }
     }
 
     ScrollView {
-        anchors.top: header.bottom
+        anchors.top: sectionHeader.bottom
+        anchors.topMargin: Theme.spacingXs
         anchors.bottom: footer.top
-        anchors.bottomMargin: 4
+        anchors.bottomMargin: Theme.spacingXs
         anchors.left: parent.left
+        anchors.leftMargin: Theme.sidebarInset
         anchors.right: parent.right
-        anchors.margins: 8
+        anchors.rightMargin: Theme.spacingSm
 
         TreeView {
             id: tree
@@ -170,10 +305,10 @@ Rectangle {
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: parent.bottom
-        anchors.leftMargin: 8
-        anchors.rightMargin: 8
-        anchors.bottomMargin: 8
-        height: 32
+        anchors.leftMargin: Theme.sidebarInset
+        anchors.rightMargin: Theme.spacingSm
+        anchors.bottomMargin: Theme.spacingSm
+        height: Theme.sidebarRowHeight
 
         IconButton {
             id: mcpButton
@@ -334,10 +469,10 @@ Rectangle {
     // Controls inside the agent title-bar strip that must stay clickable.
     // Null-guarded: qwindowkit ASSERT-aborts the whole app on null.
     function markHitTest(agent) {
-        if (rootFolderButton)
-            agent.setHitTestVisible(rootFolderButton, true)
-        else
-            console.warn("markHitTest: rootFolderButton is null")
+        // Native lights on macOS are clickable by themselves; only the
+        // custom lights need to be handed to the agent.
+        if (Qt.platform.os === "osx")
+            return
         for (var i = 0; i < 3; ++i) {
             var b = trafficLights.buttonAt(i)
             if (b)

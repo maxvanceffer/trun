@@ -258,7 +258,7 @@ Dialog {
                     Image {
                         id: rescanIcon
                         anchors.verticalCenter: parent.verticalCenter
-                        source: iconBaseUrl + (Theme.isDark ? "rotate-cw.png" : "rotate-cw-light.png")
+                        source: iconBaseUrl + (Theme.isDark ? "rotate-cw-dark.png" : "rotate-cw.png")
                         sourceSize.width: 32
                         sourceSize.height: 32
                         width: 13

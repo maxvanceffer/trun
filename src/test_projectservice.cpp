@@ -44,8 +44,10 @@ private slots:
     void testPinsPersistAndToggle();
     void testPinsPrunedOnScan();
     void testRunCommandEffective();
+    void testRecentCommandsRecordedOnStart();
     void testSameCommandIdAcrossProjectsTrackedSeparately();
     void testStaticProgramDetection();
+    void testNpmChainAndWrapperDetection();
     void testRescanDropsStaleSelection();
 };
 
@@ -464,9 +466,14 @@ void TestProjectService::testTreeGroupsManifestsUnderOneFolder() {
     service.scanFolder(tmp.path());
 
     QAbstractItemModel *tree = service.treeModel();
-    QCOMPARE(tree->rowCount(), 2);
+    QCOMPARE(tree->rowCount(), 1); // single visible root node
 
-    const QModelIndex backend = findChildByName(tree, {}, "backend");
+    const QModelIndex rootIdx = tree->index(0, 0);
+    QVERIFY(rootIdx.isValid());
+    QCOMPARE(tree->data(rootIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
+    QCOMPARE(tree->rowCount(rootIdx), 2);
+
+    const QModelIndex backend = findChildByName(tree, rootIdx, "backend");
     QVERIFY(backend.isValid());
     QCOMPARE(tree->data(backend, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
     QCOMPARE(tree->rowCount(backend), 2);
@@ -474,7 +481,7 @@ void TestProjectService::testTreeGroupsManifestsUnderOneFolder() {
     QVERIFY(findChildByName(tree, backend, "acme-js").isValid());
     QVERIFY(findChildByName(tree, backend, "acme/php").isValid());
 
-    const QModelIndex editor = findChildByName(tree, {}, "editor");
+    const QModelIndex editor = findChildByName(tree, rootIdx, "editor");
     QVERIFY(editor.isValid());
     QCOMPARE(tree->rowCount(editor), 1);
     QVERIFY(findChildByName(tree, editor, "acme-editor").isValid());
@@ -758,6 +765,36 @@ void TestProjectService::testRunCommandEffective()
     QVERIFY(!noexec.runCommandEffective(projectId, commandId));
 }
 
+void TestProjectService::testRecentCommandsRecordedOnStart()
+{
+    // Commands launched outside runCommandEffective (e.g. DetailPage's
+    // direct runWithEnv) must still land in the recent list.
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    Settings settings(tmp.path() + QStringLiteral("/trun.ini"));
+    ProjectListModel model;
+    ProjectService service(&model);
+    service.setSettings(&settings);
+    CommandExecutor executor;
+    service.setExecutor(&executor);
+
+    const QString runKey = QStringLiteral("/tmp/proj/package.json|echo:hi");
+    QSignalSpy startedSpy(&executor, &CommandExecutor::started);
+    QSignalSpy finishedSpy(&executor, &CommandExecutor::finished);
+    QVERIFY(executor.run(QStringLiteral("/bin/echo"), {QStringLiteral("hi")},
+                         tmp.path(), QStringLiteral("Echo"), runKey) > 0);
+    QVERIFY2(startedSpy.wait(5000), "started never arrived");
+    QTRY_COMPARE(service.recentCommands().size(), 1);
+    const QVariantMap recent = service.recentCommands().first().toMap();
+    QCOMPARE(recent.value("projectId").toString(), QStringLiteral("/tmp/proj/package.json"));
+    QCOMPARE(recent.value("commandId").toString(), QStringLiteral("echo:hi"));
+    QCOMPARE(recent.value("label").toString(), QStringLiteral("Echo"));
+
+    service.clearRecentCommands();
+    QCOMPARE(service.recentCommands().size(), 0);
+    QVERIFY2(finishedSpy.wait(5000), "finished never arrived");
+}
+
 void TestProjectService::testSameCommandIdAcrossProjectsTrackedSeparately()
 {
     QTemporaryDir tmp;
@@ -861,6 +898,59 @@ void TestProjectService::testStaticProgramDetection()
     QCOMPARE(symfony.value(QStringLiteral("detectedProgram")).toString(),
              QStringLiteral("symfony"));
     QCOMPARE(symfony.value(QStringLiteral("detectedPort")).toInt(), 8000);
+}
+
+void TestProjectService::testNpmChainAndWrapperDetection()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    QVERIFY(QDir(tmp.path()).mkpath(QStringLiteral("backend")));
+    QVERIFY(QDir(tmp.path()).mkpath(QStringLiteral("frontend")));
+    QVERIFY(writeJson(tmp.path() + "/backend/package.json", R"({
+        "name": "acme-backend",
+        "scripts": {
+            "serve": "npm --prefix ../frontend run serve",
+            "loop-a": "npm run loop-b",
+            "loop-b": "npm run loop-a",
+            "wrapped": "cross-env NODE_ENV=production vite --port 3001"
+        }
+    })"));
+    QVERIFY(writeJson(tmp.path() + "/frontend/package.json", R"({
+        "name": "acme-frontend",
+        "scripts": {"serve": "vite"}
+    })"));
+
+    ProjectListModel model;
+    ProjectService service(&model);
+    service.scanFolder(tmp.path());
+    QCOMPARE(service.projectCount(), 2);
+
+    auto byLabel = [&](const QString &projectName, const QString &label) {
+        for (const QJsonObject &p : service.projects()) {
+            if (p.value(QStringLiteral("name")).toString() != projectName)
+                continue;
+            for (const QJsonValue &v : p.value(QStringLiteral("commands")).toArray()) {
+                if (v.toObject().value(QStringLiteral("label")).toString() == label)
+                    return v.toObject();
+            }
+        }
+        return QJsonObject();
+    };
+    // Proxied script resolves to the real program behind the chain
+    const QJsonObject serve = byLabel(QStringLiteral("acme-backend"), QStringLiteral("serve"));
+    QVERIFY(!serve.isEmpty());
+    QCOMPARE(serve.value(QStringLiteral("detectedProgram")).toString(),
+             QStringLiteral("vite"));
+    QCOMPARE(serve.value(QStringLiteral("detectedPort")).toInt(), 5173);
+    // Env wrappers are stripped before detection
+    const QJsonObject wrapped = byLabel(QStringLiteral("acme-backend"), QStringLiteral("wrapped"));
+    QCOMPARE(wrapped.value(QStringLiteral("detectedProgram")).toString(),
+             QStringLiteral("vite"));
+    QCOMPARE(wrapped.value(QStringLiteral("detectedPort")).toInt(), 3001);
+    // Reference cycles terminate (no hang) and stay runnable
+    const QJsonObject loop = byLabel(QStringLiteral("acme-backend"), QStringLiteral("loop-a"));
+    QVERIFY(!loop.isEmpty());
+    QCOMPARE(loop.value(QStringLiteral("command")).toString(), QStringLiteral("npm"));
 }
 
 void TestProjectService::testRescanDropsStaleSelection()

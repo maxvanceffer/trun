@@ -1,6 +1,7 @@
 #include "mcpserver.h"
 #include "projectservice.h"
 #include "commandexecutor.h"
+#include "dockerservice.h"
 #include "settings.h"
 
 #include <QCoreApplication>
@@ -8,6 +9,7 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QRegularExpression>
 #include <QSocketNotifier>
 #include <QTextStream>
 #include <unistd.h>
@@ -16,6 +18,36 @@ namespace {
 constexpr const char *kProtocolVersion = "2024-11-05";
 const QStringList kLogDirs = {QStringLiteral("var/log"), QStringLiteral("storage/logs"),
                               QStringLiteral("logs"), QStringLiteral("log")};
+
+QJsonValue variantToJson(const QVariant &v)
+{
+    switch (v.typeId()) {
+    case QMetaType::QVariantMap: {
+        QJsonObject o;
+        const QVariantMap m = v.toMap();
+        for (auto it = m.begin(); it != m.end(); ++it)
+            o.insert(it.key(), variantToJson(it.value()));
+        return o;
+    }
+    case QMetaType::QVariantList:
+    case QMetaType::QStringList: {
+        QJsonArray a;
+        for (const QVariant &e : v.toList())
+            a << variantToJson(e);
+        return a;
+    }
+    case QMetaType::Bool:
+        return QJsonValue(v.toBool());
+    case QMetaType::Int:
+    case QMetaType::UInt:
+    case QMetaType::LongLong:
+    case QMetaType::ULongLong:
+    case QMetaType::Double:
+        return QJsonValue(v.toDouble());
+    default:
+        return QJsonValue(v.toString());
+    }
+}
 } // namespace
 
 McpServer::McpServer(ProjectService *projects, CommandExecutor *executor,
@@ -36,9 +68,22 @@ McpServer::McpServer(ProjectService *projects, CommandExecutor *executor,
                 static const QRegularExpression urlRe(
                     QStringLiteral("https?://(?:localhost|127\\.0\\.0\\.1|\\[::1\\]):(\\d+)"),
                     QRegularExpression::CaseInsensitiveOption);
-                const auto urlMatch = urlRe.match(line);
-                if (urlMatch.hasMatch())
-                    m_runtimePorts.insert(commandId, urlMatch.captured(1).toInt());
+                static const QRegularExpression listenRe(
+                    QStringLiteral("listening on\\s+(?:https?://)?(?:localhost|127\\.0\\.0\\.1|"
+                                   "0\\.0\\.0\\.0|\\[::1\\]):(\\d+)"),
+                    QRegularExpression::CaseInsensitiveOption);
+                static const QRegularExpression listenPortRe(
+                    QStringLiteral("listening on\\s+[a-z ]*port\\s+(\\d+)"),
+                    QRegularExpression::CaseInsensitiveOption);
+                int port = 0;
+                if (const auto urlMatch = urlRe.match(line); urlMatch.hasMatch())
+                    port = urlMatch.captured(1).toInt();
+                else if (const auto listenMatch = listenRe.match(line); listenMatch.hasMatch())
+                    port = listenMatch.captured(1).toInt();
+                else if (const auto portMatch = listenPortRe.match(line); portMatch.hasMatch())
+                    port = portMatch.captured(1).toInt();
+                if (port > 0)
+                    m_runtimePorts.insert(commandId, port);
                 if (line.contains(QStringLiteral("EADDRINUSE"))
                     || line.contains(QStringLiteral("Address already in use"),
                                      Qt::CaseInsensitive))
@@ -165,6 +210,11 @@ QJsonObject McpServer::callTool(const QJsonValue &id, const QString &name,
 {
     const auto jsonText = [](const QJsonArray &arr) {
         return QString::fromUtf8(QJsonDocument(arr).toJson(QJsonDocument::Compact));
+    };
+    const auto jsonValueText = [](const QJsonValue &v) {
+        if (v.isArray())
+            return QString::fromUtf8(QJsonDocument(v.toArray()).toJson(QJsonDocument::Compact));
+        return QString::fromUtf8(QJsonDocument(v.toObject()).toJson(QJsonDocument::Compact));
     };
 
     if (name == QStringLiteral("list_projects")) {
@@ -346,6 +396,98 @@ QJsonObject McpServer::callTool(const QJsonValue &id, const QString &name,
         return toolResult(id, hits.join(u'\n'));
     }
 
+    if (name == QStringLiteral("docker_status")) {
+        const QVariantMap engine = DockerService::queryEngine();
+        QJsonObject out = variantToJson(engine).toObject();
+        if (engine.value(QStringLiteral("available")).toBool())
+            out.insert(QStringLiteral("disk"),
+                       variantToJson(DockerService::queryDisk()));
+        return toolResult(id, jsonValueText(out));
+    }
+
+    if (name == QStringLiteral("docker_ps")) {
+        const QVariantMap engine = DockerService::queryEngine();
+        QJsonArray out;
+        if (engine.value(QStringLiteral("available")).toBool()) {
+            for (const QVariant &v : DockerService::queryContainers())
+                out << variantToJson(v);
+        }
+        return toolResult(id, jsonText(out));
+    }
+
+    if (name == QStringLiteral("docker_images")) {
+        const QVariantMap engine = DockerService::queryEngine();
+        QJsonArray out;
+        if (engine.value(QStringLiteral("available")).toBool()) {
+            for (const QVariant &v : DockerService::queryImages())
+                out << variantToJson(v);
+        }
+        return toolResult(id, jsonText(out));
+    }
+
+    if (name == QStringLiteral("docker_logs")) {
+        const QString container = args.value(QStringLiteral("name")).toString();
+        if (container.isEmpty())
+            return toolResult(id, QStringLiteral("missing container name"), true);
+        int tail = args.value(QStringLiteral("tail")).toInt(100);
+        tail = qBound(1, tail, 2000);
+        return toolResult(id, DockerService::queryLogs(container, tail));
+    }
+
+    if (name == QStringLiteral("docker_control")) {
+        const QString container = args.value(QStringLiteral("name")).toString();
+        const QString action = args.value(QStringLiteral("action")).toString();
+        if (container.isEmpty() || action.isEmpty())
+            return toolResult(id, QStringLiteral("need name and action"), true);
+        QStringList dockerArgs;
+        QString past;
+        if (action == QStringLiteral("start")) {
+            dockerArgs = {QStringLiteral("start"), container};
+            past = QStringLiteral("started");
+        } else if (action == QStringLiteral("stop")) {
+            dockerArgs = {QStringLiteral("stop"), container};
+            past = QStringLiteral("stopped");
+        } else if (action == QStringLiteral("restart")) {
+            dockerArgs = {QStringLiteral("restart"), container};
+            past = QStringLiteral("restarted");
+        } else if (action == QStringLiteral("remove")) {
+            dockerArgs = {QStringLiteral("rm"), QStringLiteral("-f"), container};
+            past = QStringLiteral("removed");
+        } else {
+            return toolResult(id, QStringLiteral("unknown action, use start|stop|restart|remove"),
+                              true);
+        }
+        QString output;
+        if (!DockerService::runDocker(dockerArgs, &output))
+            return toolResult(id, output.isEmpty() ? action + QStringLiteral(" failed") : output,
+                              true);
+        return toolResult(id, QStringLiteral("%1 %2").arg(past, container));
+    }
+
+    if (name == QStringLiteral("docker_stats")) {
+        const QVariantMap engine = DockerService::queryEngine();
+        QJsonArray out;
+        if (engine.value(QStringLiteral("available")).toBool()) {
+            const QVariantMap stats = DockerService::queryStats();
+            for (auto it = stats.begin(); it != stats.end(); ++it) {
+                QJsonObject s = variantToJson(it.value()).toObject();
+                s.insert(QStringLiteral("name"), it.key());
+                out << s;
+            }
+        }
+        return toolResult(id, jsonText(out));
+    }
+
+    if (name == QStringLiteral("docker_prune")) {
+        QString output;
+        if (!DockerService::runDocker(
+                {QStringLiteral("system"), QStringLiteral("prune"), QStringLiteral("-f")},
+                &output, 120000))
+            return toolResult(id, output.isEmpty() ? QStringLiteral("prune failed") : output,
+                              true);
+        return toolResult(id, output);
+    }
+
     return toolResult(id, QStringLiteral("unknown tool: %1").arg(name), true);
 }
 
@@ -398,6 +540,25 @@ QJsonArray McpServer::toolDefinitions() const
               {"maxResults",
                QJsonObject{{"type", "integer"}, {"description", "Cap (default 100)"}}}},
              {"project"}),
+        tool("docker_status", "Docker engine status with disk usage (colima/Desktop/OrbStack)",
+             {}),
+        tool("docker_ps", "List containers: name, image, running, status, ports, project", {}),
+        tool("docker_images", "List images: repository, tag, id, size", {}),
+        tool("docker_logs", "Tail a container's logs",
+             {{"name", str("Container name")},
+              {"tail",
+               QJsonObject{{"type", "integer"}, {"description", "Line count (default 100)"}}}},
+             {"name"}),
+        tool("docker_control", "Start, stop, restart or force-remove a container",
+             {{"name", str("Container name")},
+              {"action",
+               QJsonObject{{"type", "string"},
+                           {"enum", QJsonArray{"start", "stop", "restart", "remove"}},
+                           {"description", "Control action"}}}},
+             {"name", "action"}),
+        tool("docker_stats", "Live CPU/RAM of running containers", {}),
+        tool("docker_prune",
+             "Remove stopped containers and dangling images (docker system prune -f)", {}),
     };
 }
 
@@ -445,8 +606,13 @@ void McpServer::appendLog(const QString &commandId, const QString &level,
 {
     if (commandId.isEmpty())
         return;
+    // SGR colors are preserved for the QML console; MCP consumers get plain
+    // text (OSC escapes are already stripped upstream).
+    static const QRegularExpression sgr(QStringLiteral("\x1b\\[[0-9;]*m"));
+    QString clean = message;
+    clean.remove(sgr);
     QList<LogLine> &buf = m_logs[commandId];
-    buf << LogLine{QDateTime::currentMSecsSinceEpoch(), level, target, message};
+    buf << LogLine{QDateTime::currentMSecsSinceEpoch(), level, target, clean};
     while (buf.size() > kMaxLogLines)
         buf.removeFirst();
 }

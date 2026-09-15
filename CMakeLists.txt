@@ -35,6 +35,12 @@ qt_add_executable(trun-app
     src/mcpserver.cpp
     src/mcpagents.h
     src/mcpagents.cpp
+    src/systemstats.h
+    src/systemstats.cpp
+    src/databaseservice.h
+    src/databaseservice.cpp
+    src/dockerservice.h
+    src/dockerservice.cpp
     src/mactitlebar.h
 )
 
@@ -59,6 +65,8 @@ qt_add_qml_module(trun-app
         qml/RunConfigDialog.qml
         qml/McpSetupDialog.qml
         qml/TrafficLights.qml
+        qml/DatabasesPage.qml
+        qml/DockerPage.qml
     RESOURCES
         qml.qrc
 )
@@ -81,8 +89,10 @@ target_link_libraries(trun-app PRIVATE
 )
 
 if(APPLE)
-    target_sources(trun-app PRIVATE src/mactitlebar.mm)
+    target_sources(trun-app PRIVATE src/mactitlebar.mm src/databaseservice_macos.cpp)
     target_link_libraries(trun-app PRIVATE "-framework AppKit")
+elseif(UNIX)
+    target_sources(trun-app PRIVATE src/databaseservice_linux.cpp)
 endif()
 
 # =====================================================================
@@ -167,6 +177,8 @@ add_executable(test_mcpserver
     src/test_mcpserver.cpp
     src/mcpserver.h
     src/mcpserver.cpp
+    src/dockerservice.h
+    src/dockerservice.cpp
     src/projectservice.h
     src/projectservice.cpp
     src/commandexecutor.h

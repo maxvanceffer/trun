@@ -15,6 +15,10 @@ run commands and read logs. Every one of them supports MCP servers over stdio.
   `ProjectService`, `CommandExecutor` and `Settings`.
 - Tool surface: `list_projects`, `list_commands`, `status`, `run`, `stop`,
   `read_log`, `search_logs`. `run` applies the stored run configuration.
+- Docker surface (same daemon the Docker page shows): `docker_status`,
+  `docker_ps`, `docker_images`, `docker_logs`, `docker_control`
+  (start|stop|restart|remove), `docker_stats`, `docker_prune`. Synchronous
+  queries live on `DockerService` as statics shared with the GUI.
 
 ## Alternatives considered
 
