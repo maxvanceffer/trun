@@ -41,12 +41,13 @@ jobs:
           echo "Building version: ${VER}"
 
       - name: Install Qt 6
+        # NOTE: no `modules:` — the default set already contains everything
+        # this project needs (incl. Svg); Qt 6.11 has no separate qtsvg addon.
         uses: jurplel/install-qt-action@v4
         with:
           version: '6.11.2'
           host: 'mac'
           target: 'desktop'
-          modules: 'qtsvg'
 
       - name: Configure (Release)
         run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRUN_VERSION='${{ steps.ver.outputs.version }}'
