@@ -1,0 +1,9 @@
+{
+    "name": "trun-root-test",
+    "description": "Root test project",
+    "scripts": {
+        "build": "tsc",
+        "test": "jest",
+        "dev": "next dev"
+    }
+}

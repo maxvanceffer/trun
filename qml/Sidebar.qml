@@ -1,0 +1,498 @@
+import QtQuick
+import QtQuick.Controls 6.5
+import QtQuick.Layouts 6.5
+import QtQuick.Effects
+
+Rectangle {
+    id: sidebar
+    width: Theme.sidebarWidth
+    color: "transparent"
+
+    // Square when maximized, rounded outer corners otherwise
+    readonly property int cornerR: (Window.visibility === Window.Maximized
+                                    || Window.visibility === Window.FullScreen) ? 0 : Theme.radiusLg
+
+    // Frosted band: translucent over the native blur on macOS so the
+    // desktop shows through, solid theme tone elsewhere. The solid
+    // content surface on the right is what clips it to the sidebar.
+    Rectangle {
+        anchors.fill: parent
+        topLeftRadius: sidebar.cornerR
+        bottomLeftRadius: sidebar.cornerR
+        color: Qt.platform.os === "osx"
+            ? Qt.rgba(Theme.sidebarBackground.r, Theme.sidebarBackground.g,
+                      Theme.sidebarBackground.b, Theme.isDark ? 0.62 : 0.55)
+            : Theme.sidebarBackground
+    }
+
+    signal projectSelected(string projectId)
+    signal dashboardRequested()
+    signal databasesRequested()
+    signal dockerRequested()
+    signal mcpConfigureRequested()
+    signal addCustomRequested(string folderPath)
+    signal closeRequested()
+    signal minimizeRequested()
+    signal maximizeRequested()
+
+    // Connect log messages
+    Connections {
+        target: projectService
+
+        function onLogMessage(level, target, message) {
+            logModel.add(level, target, message)
+        }
+    }
+
+    Rectangle {
+        id: header
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Theme.titleBarHeight
+        color: "transparent"
+
+        // Own traffic lights: macOS uses the native ones kept by
+        // QWindowKit; other platforms draw their own.
+        TrafficLights {
+            id: trafficLights
+            anchors.left: parent.left
+            anchors.leftMargin: 12
+            anchors.verticalCenter: parent.verticalCenter
+            visible: Qt.platform.os !== "osx"
+            windowActive: Window.active
+            onCloseRequested: sidebar.closeRequested()
+            onMinimizeRequested: sidebar.minimizeRequested()
+            onMaximizeRequested: sidebar.maximizeRequested()
+        }
+    }
+
+    // Static Dashboard entry, always present above the project list.
+    Item {
+        id: dashboardRow
+        objectName: "dashboardRow"
+        anchors.top: header.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Theme.sidebarRowHeight
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.topMargin: 1
+            anchors.bottomMargin: 1
+            anchors.leftMargin: Theme.spacingSm
+            anchors.rightMargin: Theme.spacingSm
+            radius: Theme.radiusSm
+            color: dashMouse.pressed
+                ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35)
+                : (dashMouse.containsMouse
+                    ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                    : "transparent")
+        }
+
+        RowLayout {
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.sidebarInset
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.sidebarInset
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.spacingSm
+
+            Image {
+                Layout.preferredWidth: Theme.iconSm
+                Layout.preferredHeight: Theme.iconSm
+                Layout.alignment: Qt.AlignVCenter
+                source: iconBaseUrl + (Theme.isDark ? "dashboard-dark.png" : "dashboard.png")
+                sourceSize.width: 32
+                sourceSize.height: 32
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                text: qsTr("Dashboard")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeMd
+                elide: Text.ElideRight
+            }
+        }
+
+        MouseArea {
+            id: dashMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sidebar.dashboardRequested()
+        }
+    }
+
+    // Static sections, right below Dashboard.
+    Item {
+        id: databasesHeader
+        objectName: "databasesHeader"
+        anchors.top: dashboardRow.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Theme.sidebarRowHeight
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.topMargin: 1
+            anchors.bottomMargin: 1
+            anchors.leftMargin: Theme.spacingSm
+            anchors.rightMargin: Theme.spacingSm
+            radius: Theme.radiusSm
+            color: databasesMouse.containsMouse
+                ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                : "transparent"
+        }
+
+        RowLayout {
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.sidebarInset
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.spacingSm
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.spacingSm
+
+            Image {
+                Layout.preferredWidth: Theme.iconSm
+                Layout.preferredHeight: Theme.iconSm
+                Layout.alignment: Qt.AlignVCenter
+                source: iconBaseUrl + (Theme.isDark ? "database-dark.png" : "database.png")
+                sourceSize.width: 32
+                sourceSize.height: 32
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                text: qsTr("Databases")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeMd
+                elide: Text.ElideRight
+            }
+        }
+
+        MouseArea {
+            id: databasesMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sidebar.databasesRequested()
+        }
+    }
+
+    Item {
+        id: dockerHeader
+        objectName: "dockerHeader"
+        anchors.top: databasesHeader.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Theme.sidebarRowHeight
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.topMargin: 1
+            anchors.bottomMargin: 1
+            anchors.leftMargin: Theme.spacingSm
+            anchors.rightMargin: Theme.spacingSm
+            radius: Theme.radiusSm
+            color: dockerMouse.containsMouse
+                ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                : "transparent"
+        }
+
+        RowLayout {
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.sidebarInset
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.spacingSm
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.spacingSm
+
+            Image {
+                Layout.preferredWidth: Theme.iconSm
+                Layout.preferredHeight: Theme.iconSm
+                Layout.alignment: Qt.AlignVCenter
+                source: iconBaseUrl + (Theme.isDark ? "docker-dark.png" : "docker.png")
+                sourceSize.width: 32
+                sourceSize.height: 32
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                text: qsTr("Docker")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeMd
+                elide: Text.ElideRight
+            }
+        }
+
+        MouseArea {
+            id: dockerMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sidebar.dockerRequested()
+        }
+    }
+
+    // Fixed section title above the dynamically added projects.
+    Item {
+        id: sectionHeader
+        anchors.top: dockerHeader.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Theme.sidebarRowHeight
+
+        Label {
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.sidebarInset
+            anchors.verticalCenter: parent.verticalCenter
+            text: qsTr("Projects")
+            color: Theme.textMuted
+            font.pixelSize: Theme.fontSizeSm
+            font.bold: true
+        }
+    }
+
+    ScrollView {
+        anchors.top: sectionHeader.bottom
+        anchors.topMargin: Theme.spacingXs
+        anchors.bottom: footer.top
+        anchors.bottomMargin: Theme.spacingXs
+        anchors.left: parent.left
+        anchors.leftMargin: Theme.sidebarInset
+        anchors.right: parent.right
+        anchors.rightMargin: Theme.spacingSm
+
+        TreeView {
+            id: tree
+            anchors.fill: parent
+            clip: true
+            model: treeModel
+            delegate: TreeItemDelegate {
+                onProjectClicked: function(projectId) {
+                    tree.selectedProjectId = projectId
+                    sidebar.projectSelected(projectId)
+                }
+                onAddCustomRequested: function(folderPath) {
+                    sidebar.addCustomRequested(folderPath)
+                }
+            }
+
+            // Single column spans the full width so row highlight
+            // covers the whole sidebar
+            columnWidthProvider: function(column) { return tree.width }
+
+            // Selected project id (path + "/" + manifest).
+            // Expansion itself is owned by TreeView (toggleExpanded).
+            property string selectedProjectId: ""
+        }
+    }
+
+    // Footer with the MCP placeholder button
+    Item {
+        id: footer
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: parent.bottom
+        anchors.leftMargin: Theme.sidebarInset
+        anchors.rightMargin: Theme.spacingSm
+        anchors.bottomMargin: Theme.spacingSm
+        height: Theme.sidebarRowHeight
+
+        IconButton {
+            id: mcpButton
+            objectName: "mcpButton"
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            iconSource: iconBaseUrl + (Theme.isDark ? "mcp-light-32px.png" : "mcp-dark-32px.png")
+            tooltipText: qsTr("MCP servers")
+            suppressTooltip: mcpMenu.visible
+            onClicked: mcpMenu.visible = !mcpMenu.visible
+        }
+    }
+
+    // Click-outside catcher: closes the menu, sits under it
+    MouseArea {
+        anchors.fill: parent
+        visible: mcpMenu.visible
+        z: 98
+        onClicked: mcpMenu.visible = false
+    }
+
+    // Custom context menu: fixed size, theme colors, rounded, hairline
+    // border, soft shadow.
+    // (QtQuick.Controls Menu with a custom delegate collapses to ~0 width,
+    // so the menu is built from primitives instead.)
+    Item {
+        id: mcpMenu
+        objectName: "mcpMenu"
+        visible: false
+        z: 99
+        // Right of the button (28px) with a 6px gap, bottom-aligned
+        // with the footer. Anchored to footer (a sibling), not the button.
+        anchors.left: footer.left
+        anchors.leftMargin: 34
+        anchors.bottom: footer.bottom
+        width: 180
+        height: menuColumn.implicitHeight + 12
+
+        Rectangle {
+            id: mcpMenuCard
+            anchors.fill: parent
+            radius: 8
+            color: Theme.cardBackground
+            border.color: Theme.border
+            border.width: 1
+        }
+
+        MultiEffect {
+            anchors.fill: mcpMenuCard
+            source: mcpMenuCard
+            shadowEnabled: true
+            shadowColor: Qt.rgba(0, 0, 0, 0.5)
+            shadowBlur: 1.0
+            shadowVerticalOffset: 4
+        }
+
+        Column {
+            id: menuColumn
+            anchors.fill: parent
+            anchors.margins: 6
+            spacing: 2
+
+            Rectangle {
+                width: parent.width
+                height: 32
+                radius: 6
+                color: enableAllRow.hovered
+                    ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                    : "transparent"
+
+                Label {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    text: qsTr("Enable all")
+                    color: Theme.textPrimary
+                    font.pixelSize: 12
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                MouseArea {
+                    id: enableAllRow
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        mcpMenu.visible = false
+                        sidebar.setAllMcpEnabled(true)
+                    }
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 32
+                radius: 6
+                color: disableAllRow.hovered
+                    ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                    : "transparent"
+
+                Label {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    text: qsTr("Disable all")
+                    color: Theme.textPrimary
+                    font.pixelSize: 12
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                MouseArea {
+                    id: disableAllRow
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        mcpMenu.visible = false
+                        sidebar.setAllMcpEnabled(false)
+                    }
+                }
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 1
+                color: Theme.border
+            }
+
+            Rectangle {
+                width: parent.width
+                height: 32
+                radius: 6
+                color: configureRow.hovered
+                    ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                    : "transparent"
+
+                Label {
+                    anchors.fill: parent
+                    anchors.leftMargin: 10
+                    text: qsTr("Configure…")
+                    color: Theme.textPrimary
+                    font.pixelSize: 12
+                    verticalAlignment: Text.AlignVCenter
+                }
+
+                MouseArea {
+                    id: configureRow
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    cursorShape: Qt.PointingHandCursor
+                    onClicked: {
+                        mcpMenu.visible = false
+                        sidebar.mcpConfigureRequested()
+                    }
+                }
+            }
+        }
+    }
+
+    // Controls inside the agent title-bar strip that must stay clickable.
+    // Null-guarded: qwindowkit ASSERT-aborts the whole app on null.
+    function markHitTest(agent) {
+        // Native lights on macOS are clickable by themselves; only the
+        // custom lights need to be handed to the agent.
+        if (Qt.platform.os === "osx")
+            return
+        for (var i = 0; i < 3; ++i) {
+            var b = trafficLights.buttonAt(i)
+            if (b)
+                agent.setHitTestVisible(b, true)
+            else
+                console.warn("markHitTest: traffic button " + i + " is null")
+        }
+    }
+
+    function setAllMcpEnabled(enabled) {        var agents = mcpAgents.scanAgents()
+        var changed = 0
+        for (var i = 0; i < agents.length; ++i) {
+            if (!agents[i].installed) {
+                if (enabled && agents[i].found && mcpAgents.installAgent(agents[i].id))
+                    ++changed
+            } else if (agents[i].enabled !== enabled) {
+                if (mcpAgents.setAgentEnabled(agents[i].id, enabled))
+                    ++changed
+            }
+        }
+        logModel.add("info", "mcp", (enabled ? "Enabled " : "Disabled ") + changed + " MCP entries")
+    }
+}

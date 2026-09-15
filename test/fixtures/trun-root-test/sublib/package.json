@@ -1,0 +1,6 @@
+{
+    "name": "sublib",
+    "scripts": {
+        "lint": "eslint ."
+    }
+}
