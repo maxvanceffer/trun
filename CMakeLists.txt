@@ -1,5 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
-project(trun VERSION 0.1.0 LANGUAGES CXX)
+
+# Release version: override from CI with -DTRUN_VERSION=<tag without v>
+if(NOT DEFINED TRUN_VERSION)
+    set(TRUN_VERSION 0.1.0)
+endif()
+project(trun VERSION ${TRUN_VERSION} LANGUAGES CXX)
 
 if(APPLE)
     enable_language(OBJCXX)
@@ -12,13 +17,14 @@ find_package(Qt6 6.5 REQUIRED COMPONENTS Quick QuickControls2 QuickDialogs2 Core
 qt_standard_project_setup()
 
 # Frameless window framework (Quick module only; no-op off macOS where unused)
+set(QWINDOWKIT_BUILD_STATIC ON CACHE BOOL "" FORCE)
 set(QWINDOWKIT_BUILD_WIDGETS OFF CACHE BOOL "" FORCE)
 set(QWINDOWKIT_BUILD_QUICK ON CACHE BOOL "" FORCE)
 set(QWINDOWKIT_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(QWINDOWKIT_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/qwindowkit)
 
-qt_add_executable(trun-app
+qt_add_executable(trun-app MACOSX_BUNDLE
     src/main.cpp
     src/projectservice.h
     src/projectservice.cpp
@@ -67,6 +73,8 @@ qt_add_qml_module(trun-app
         qml/TrafficLights.qml
         qml/DatabasesPage.qml
         qml/DockerPage.qml
+        qml/BusyLabel.qml
+        qml/Spinner.qml
     RESOURCES
         qml.qrc
 )
@@ -87,6 +95,24 @@ target_link_libraries(trun-app PRIVATE
     Qt6::Widgets
     QWindowKit::Quick
 )
+
+# Version visible in code (QApplication::applicationVersion), overridable via -DTRUN_VERSION=
+target_compile_definitions(trun-app PRIVATE TRUN_VERSION="${TRUN_VERSION}")
+
+if(APPLE)
+    set_target_properties(trun-app PROPERTIES
+        MACOSX_BUNDLE_GUI_IDENTIFIER "com.maxvanceffer.trun"
+        MACOSX_BUNDLE_BUNDLE_NAME "trun"
+        MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
+        MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
+    )
+    # main.cpp loads QML/icons from files next to the binary
+    # (exePath + "/qml/main.qml", exePath + "/icons"), so ship them in the bundle.
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/qml"
+        DESTINATION "trun-app.app/Contents/MacOS")
+    install(DIRECTORY "${CMAKE_SOURCE_DIR}/assets/icons"
+        DESTINATION "trun-app.app/Contents/MacOS")
+endif()
 
 if(APPLE)
     target_sources(trun-app PRIVATE src/mactitlebar.mm src/databaseservice_macos.cpp)

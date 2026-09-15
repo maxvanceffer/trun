@@ -21,6 +21,11 @@
 #include "dockerservice.h"
 #include <QWKQuick/qwkquickglobal.h>
 
+// Injected by CMake (-DTRUN_VERSION=); fallback for ad-hoc builds.
+#ifndef TRUN_VERSION
+#define TRUN_VERSION "0.1.0"
+#endif
+
 int main(int argc, char *argv[])
 {
     // Required for window transparency / blur effects
@@ -30,7 +35,7 @@ int main(int argc, char *argv[])
         if (QString::fromUtf8(argv[i]) == QStringLiteral("--mcp")) {
             QCoreApplication app(argc, argv);
             app.setApplicationName("trun");
-            app.setApplicationVersion("0.1.0");
+            app.setApplicationVersion(QStringLiteral(TRUN_VERSION));
             app.setOrganizationName("trun");
 
             static Settings settings;
@@ -50,7 +55,7 @@ int main(int argc, char *argv[])
     QQuickStyle::setStyle("Basic");
 
     app.setApplicationName("trun");
-    app.setApplicationVersion("0.1.0");
+    app.setApplicationVersion(QStringLiteral(TRUN_VERSION));
     app.setOrganizationName("trun");
 
     qWarning() << "[App] Starting trun v" << app.applicationVersion();

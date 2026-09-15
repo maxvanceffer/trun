@@ -1,0 +1,104 @@
+name: Release (macOS)
+
+# Builds a signed .app bundle, packs .dmg (manual install) + .zip (future
+# in-app updater), and attaches both to the GitHub Release.
+#
+# Usage: git tag v0.2.0 && git push origin v0.2.0
+# Manual run (build only, no Release published): Actions → Release (macOS) → Run workflow.
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version for a manual build (e.g. 0.2.0, without v)'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  macos-arm64:
+    runs-on: macos-14
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        run: |
+          if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then
+            VER="${GITHUB_REF_NAME#v}"
+          elif [[ -n "${{ inputs.version }}" ]]; then
+            VER="${{ inputs.version }}"
+          else
+            VER="0.0.0-dev+${GITHUB_SHA::7}"
+          fi
+          echo "version=${VER}" >> "${GITHUB_OUTPUT}"
+          echo "Building version: ${VER}"
+
+      - name: Install Qt 6
+        uses: jurplel/install-qt-action@v4
+        with:
+          version: '6.11.2'
+          host: 'mac'
+          target: 'desktop'
+          modules: 'qtsvg'
+
+      - name: Configure (Release)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release -DTRUN_VERSION='${{ steps.ver.outputs.version }}'
+
+      - name: Build trun-app
+        run: cmake --build build --config Release --target trun-app --parallel
+
+      - name: Install to staging dir
+        run: cmake --install build --prefix dist --config Release
+
+      - name: Deploy Qt into bundle
+        # NOTE: macdeployqt prints ERROR lines for optional QML modules it cannot
+        # resolve (VirtualKeyboard, Qt3D, Pdf, …) — harmless, the app doesn't use them.
+        run: macdeployqt dist/trun-app.app -qmldir=qml
+
+      - name: Ad-hoc sign (until Apple Developer ID is set up)
+        run: |
+          codesign --force --deep --sign - dist/trun-app.app
+          codesign --verify --deep dist/trun-app.app
+
+      # TODO(after joining Apple Developer Program): replace the ad-hoc sign step above with:
+      #   1. import the Developer ID Application certificate from
+      #      secrets.APPLE_CERTIFICATE (base64 .p12) + secrets.APPLE_CERT_PASSWORD
+      #   2. codesign --deep --force --options runtime --sign "Developer ID Application: ..." dist/trun-app.app
+      #   3. attach stapled ticket:
+      #      xcrun notarytool submit <dmg> --apple-id <id> --team-id <team> \
+      #        --password ${{ secrets.APPLE_APP_PASSWORD }} --wait
+      #      xcrun stapler staple <dmg>
+
+      - name: Pack .zip (for the future in-app updater)
+        run: ditto -c -k --keepParent dist/trun-app.app 'trun-${{ steps.ver.outputs.version }}-macos-arm64.zip'
+
+      - name: Pack .dmg (manual install)
+        run: >
+          hdiutil create -volname 'trun ${{ steps.ver.outputs.version }}'
+          -srcfolder dist/trun-app.app -ov -format UDZO
+          'trun-${{ steps.ver.outputs.version }}-macos-arm64.dmg'
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            trun-*-macos-arm64.dmg
+            trun-*-macos-arm64.zip
+          generate_release_notes: true
+
+      - name: Upload artifacts (manual runs only)
+        if: "!startsWith(github.ref, 'refs/tags/')"
+        uses: actions/upload-artifact@v4
+        with:
+          name: trun-${{ steps.ver.outputs.version }}-macos-arm64
+          path: |
+            trun-*-macos-arm64.dmg
+            trun-*-macos-arm64.zip
