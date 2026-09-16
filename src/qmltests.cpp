@@ -992,11 +992,26 @@ public:
     Q_INVOKABLE bool prune() { return true; }
     Q_INVOKABLE bool startContainer(const QString &) { return true; }
     Q_INVOKABLE bool stopContainer(const QString &) { return true; }
+    Q_INVOKABLE bool removeImage(const QString &id)
+    {
+        m_removed << id;
+        return true;
+    }
+    Q_INVOKABLE bool removeContainer(const QString &name)
+    {
+        m_removed << name;
+        return true;
+    }
+    QStringList removed() const { return m_removed; }
 
 signals:
     void busyChanged();
     void logsReady(const QString &name, const QString &logs);
+    void logsError(const QString &message);
     void errorMessage(const QString &message);
+
+private:
+    QStringList m_removed;
 };
 
 void QmlTests::test_docker_page_cards_span_width()
@@ -1048,7 +1063,35 @@ void QmlTests::test_docker_page_cards_span_width()
     QCOMPARE(confirmDialog->property("targetId").toString(), QString("def456"));
     QCOMPARE(confirmDialog->property("targetTitle").toString(), QString("nginx:latest"));
 
+    // Confirming hides the Remove button (pendingRemove set, service called)
+    QVERIFY(QMetaObject::invokeMethod(obj, "confirmRemove"));
+    QCOMPARE(obj->property("pendingRemove").toString(), QString("def456"));
+    QVERIFY(docker.removed().contains(QString("def456")));
+
     delete obj;
+}
+
+void QmlTests::test_busy_label_loads()
+{
+    QQmlEngine engine;
+    const QString buildDir = QDir::currentPath();
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(buildDir + "/icons/").toString());
+
+    for (const char *layout : {"horizontal", "vertical"}) {
+        QQmlComponent component(&engine,
+            QUrl::fromLocalFile(sourceQmlPath("BusyLabel.qml")));
+        QVERIFY2(component.isReady(), layout);
+        QObject *obj = component.create();
+        QVERIFY(obj != nullptr);
+        QScopedPointer<QObject> guard(obj);
+        QVERIFY(obj->setProperty("layout", QString::fromUtf8(layout)));
+        auto *item = qobject_cast<QQuickItem *>(obj);
+        QVERIFY(item != nullptr);
+        QTest::qWait(50);
+        QVERIFY2(item->implicitWidth() > 0.0, layout);
+        QVERIFY2(item->implicitHeight() > 0.0, layout);
+    }
 }
 
 #include "qmltests.moc"

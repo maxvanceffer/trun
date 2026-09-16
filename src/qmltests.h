@@ -38,5 +38,6 @@ private slots:
     void test_mcp_menu_geometry();
     void test_dashboard_layout_geometry();
     void test_docker_page_cards_span_width();
+    void test_busy_label_loads();
     void test_run_all_recent();
 };

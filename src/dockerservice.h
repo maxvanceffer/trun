@@ -3,6 +3,7 @@
 #include <QObject>
 #include <QVariantList>
 #include <QVariantMap>
+#include <atomic>
 
 // Docker engine status (via colima or any Docker Desktop/OrbStack daemon)
 // plus container/image lists and per-container log fetching.
@@ -47,12 +48,14 @@ public:
 
     // Synchronous queries for headless consumers (MCP server). Blocking:
     // call off the GUI thread or from the headless --mcp mode.
+    // ok (when given) reports transport success: false means the daemon
+    // did not answer (timeout), not an empty result.
     static QVariantMap queryEngine();
-    static QVariantList queryContainers();
-    static QVariantList queryImages();
-    static QVariantMap queryDisk();
-    static QVariantMap queryStats();
-    static QString queryLogs(const QString &name, int tail);
+    static QVariantList queryContainers(bool *ok = nullptr);
+    static QVariantList queryImages(bool *ok = nullptr);
+    static QVariantMap queryDisk(bool *ok = nullptr);
+    static QVariantMap queryStats(bool *ok = nullptr);
+    static QString queryLogs(const QString &name, int tail, bool *ok = nullptr);
     // Runs `docker <args>` synchronously; output holds stdout (plus stderr
     // on failure). Timeout in ms.
     static bool runDocker(const QStringList &args, QString *output = nullptr,
@@ -66,14 +69,24 @@ signals:
     void statsChanged();
     void busyChanged();
     void logsReady(const QString &name, const QString &logs);
+    void logsError(const QString &message);
     void errorMessage(const QString &message);
 
 private:
-    bool control(const QStringList &args);
+    // Quiet ops skip the global busy flag (no rescan spinner): the UI
+    // tracks them per item via pendingRemove instead.
+    bool control(const QStringList &args, bool quiet = false);
+    // One full rescan off the GUI thread. Failed queries keep their
+    // previous data (reported via error); only successes overwrite.
+    void applyScan(const QVariantMap &engine, const QVariantList &containers,
+                   bool containersOk, const QVariantList &images, bool imagesOk,
+                   const QVariantMap &disk, bool diskOk, const QString &error);
     QVariantMap m_engine;
     QVariantList m_containers;
     QVariantList m_images;
     QVariantMap m_disk;
     QVariantMap m_stats;
     bool m_busy = false;
+    std::atomic<bool> m_statsBusy{false};
+    std::atomic<bool> m_logsBusy{false};
 };

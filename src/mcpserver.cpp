@@ -431,7 +431,11 @@ QJsonObject McpServer::callTool(const QJsonValue &id, const QString &name,
             return toolResult(id, QStringLiteral("missing container name"), true);
         int tail = args.value(QStringLiteral("tail")).toInt(100);
         tail = qBound(1, tail, 2000);
-        return toolResult(id, DockerService::queryLogs(container, tail));
+        bool ok = false;
+        const QString logs = DockerService::queryLogs(container, tail, &ok);
+        if (!ok)
+            return toolResult(id, logs, true);
+        return toolResult(id, logs);
     }
 
     if (name == QStringLiteral("docker_control")) {

@@ -171,7 +171,7 @@ Item {
     }
 
     function groupControl(list, action) {
-        if (dockerPage.svc && !dockerPage.busy)
+        if (dockerPage.svc && !dockerPage.busy && dockerPage.pendingRemove === "")
             dockerPage.svc.controlGroup(dockerPage.groupNames(list), action)
     }
 
@@ -195,6 +195,9 @@ Item {
         function onLogsReady(name, logs) {
             if (dockerPage.openLogsFor === name)
                 dockerPage.logsText = logs === "" ? qsTr("(no output)") : logs
+        }
+        function onLogsError(message) {
+            logModel.add("error", "docker", message)
         }
         function onErrorMessage(message) {
             dockerPage.pendingRemove = ""
@@ -393,6 +396,7 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
+                        enabled: dockerPage.pendingRemove === ""
                         onClicked: dockerPage.reload()
                     }
 
@@ -502,6 +506,7 @@ Item {
                             implicitHeight: 30
                             visible: dockerPage.engine && dockerPage.engine.colimaInstalled === true
                             enabled: dockerPage.svc && !dockerPage.busy
+                                && dockerPage.pendingRemove === ""
                             onClicked: {
                                 if (!dockerPage.svc)
                                     return
@@ -533,6 +538,7 @@ Item {
                             implicitHeight: 30
                             visible: dockerPage.engine && dockerPage.engine.available === true
                             enabled: dockerPage.svc && !dockerPage.busy
+                                && dockerPage.pendingRemove === ""
                             onClicked: {
                                 if (dockerPage.svc)
                                     dockerPage.svc.prune()
@@ -678,6 +684,7 @@ Item {
                                 implicitWidth: 76
                                 implicitHeight: 30
                                 enabled: dockerPage.svc && !dockerPage.busy
+                                    && dockerPage.pendingRemove === ""
                                 onClicked: {
                                     if (!dockerPage.svc)
                                         return
@@ -761,6 +768,7 @@ Item {
                             }
 
                             Button {
+                                visible: dockerPage.pendingRemove !== containerCard.modelData.name
                                 Layout.alignment: Qt.AlignVCenter
                                 implicitWidth: 88
                                 implicitHeight: 30
@@ -776,26 +784,22 @@ Item {
                                     border.width: 1
                                 }
 
-                                contentItem: Row {
-                                    anchors.centerIn: parent
-                                    spacing: 6
-
-                                    BusyIndicator {
-                                        visible: dockerPage.pendingRemove === containerCard.modelData.name
-                                        running: visible
-                                        width: 14
-                                        height: 14
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
-
-                                    Label {
-                                        text: dockerPage.pendingRemove === containerCard.modelData.name
-                                            ? qsTr("Removing") : qsTr("Remove")
-                                        color: Theme.destructive
-                                        font.pixelSize: Theme.fontSizeMd
-                                        anchors.verticalCenter: parent.verticalCenter
-                                    }
+                                contentItem: Label {
+                                    text: qsTr("Remove")
+                                    color: Theme.destructive
+                                    font.pixelSize: Theme.fontSizeMd
+                                    horizontalAlignment: Text.AlignHCenter
+                                    verticalAlignment: Text.AlignVCenter
                                 }
+                            }
+
+                            BusyLabel {
+                                visible: dockerPage.pendingRemove === containerCard.modelData.name
+                                Layout.alignment: Qt.AlignVCenter
+                                Layout.preferredWidth: 88
+                                Layout.preferredHeight: 30
+                                layout: "horizontal"
+                                text: qsTr("Removing")
                             }
                         }
 
@@ -865,6 +869,7 @@ Item {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
                                 enabled: dockerPage.svc && !dockerPage.busy
+                                    && dockerPage.pendingRemove === ""
                                 onClicked: dockerPage.groupControl(
                                     dockerPage.containersOf(groupBlock.modelData), "start")
                             }
@@ -887,6 +892,7 @@ Item {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
                                 enabled: dockerPage.svc && !dockerPage.busy
+                                    && dockerPage.pendingRemove === ""
                                 onClicked: dockerPage.groupControl(
                                     dockerPage.containersOf(groupBlock.modelData), "stop")
                             }
@@ -909,6 +915,7 @@ Item {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
                                 enabled: dockerPage.svc && !dockerPage.busy
+                                    && dockerPage.pendingRemove === ""
                                 onClicked: dockerPage.groupControl(
                                     dockerPage.containersOf(groupBlock.modelData), "restart")
                             }
@@ -991,6 +998,7 @@ Item {
                         }
 
                         Button {
+                            visible: dockerPage.pendingRemove !== imageCard.modelData.id
                             Layout.alignment: Qt.AlignVCenter
                             implicitWidth: 88
                             implicitHeight: 30
@@ -1006,26 +1014,22 @@ Item {
                                 border.width: 1
                             }
 
-                            contentItem: Row {
-                                anchors.centerIn: parent
-                                spacing: 6
-
-                                BusyIndicator {
-                                    visible: dockerPage.pendingRemove === imageCard.modelData.id
-                                    running: visible
-                                    width: 14
-                                    height: 14
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
-
-                                Label {
-                                    text: dockerPage.pendingRemove === imageCard.modelData.id
-                                        ? qsTr("Removing") : qsTr("Remove")
-                                    color: Theme.destructive
-                                    font.pixelSize: Theme.fontSizeMd
-                                    anchors.verticalCenter: parent.verticalCenter
-                                }
+                            contentItem: Label {
+                                text: qsTr("Remove")
+                                color: Theme.destructive
+                                font.pixelSize: Theme.fontSizeMd
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
                             }
+                        }
+
+                        BusyLabel {
+                            visible: dockerPage.pendingRemove === imageCard.modelData.id
+                            Layout.alignment: Qt.AlignVCenter
+                            Layout.preferredWidth: 88
+                            Layout.preferredHeight: 30
+                            layout: "horizontal"
+                            text: qsTr("Removing")
                         }
                     }
                 }

@@ -77,6 +77,8 @@ qt_add_qml_module(trun-app
         qml/TrafficLights.qml
         qml/DatabasesPage.qml
         qml/DockerPage.qml
+        qml/BusyLabel.qml
+        qml/Spinner.qml
     RESOURCES
         qml.qrc
 )

@@ -9,11 +9,19 @@
 
 namespace {
 
-QString runCapture(const QString &program, const QStringList &args, int timeoutMs = 15000)
+// `docker ps`/`df` take 7-10s against a loaded colima VM: keep the
+// timeout generous, the calls run off the GUI thread.
+constexpr int kQueryTimeoutMs = 60000;
+
+QString runCapture(const QString &program, const QStringList &args,
+                   int timeoutMs = kQueryTimeoutMs, bool *ok = nullptr)
 {
     QProcess p;
     p.start(program, args);
-    if (!p.waitForFinished(timeoutMs))
+    const bool done = p.waitForFinished(timeoutMs);
+    if (ok)
+        *ok = done && p.exitCode() == 0;
+    if (!done)
         return {};
     return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
 }
@@ -97,11 +105,15 @@ QVariantMap DockerService::queryEngine()
     return e;
 }
 
-QVariantList DockerService::queryContainers()
+QVariantList DockerService::queryContainers(bool *ok)
 {
     QVariantList out;
+    bool done = false;
     const QString raw = runCapture(QStringLiteral("docker"),
-                                   {QStringLiteral("ps"), QStringLiteral("-a"), QStringLiteral("--format"), QStringLiteral("{{json .}}")});
+                                   {QStringLiteral("ps"), QStringLiteral("-a"), QStringLiteral("--format"), QStringLiteral("{{json .}}")},
+                                   kQueryTimeoutMs, &done);
+    if (ok)
+        *ok = done;
     if (raw.isEmpty())
         return out;
     const QStringList lines = raw.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
@@ -132,11 +144,15 @@ QVariantList DockerService::queryContainers()
     return out;
 }
 
-QVariantList DockerService::queryImages()
+QVariantList DockerService::queryImages(bool *ok)
 {
     QVariantList out;
+    bool done = false;
     const QString raw = runCapture(QStringLiteral("docker"),
-                                   {QStringLiteral("images"), QStringLiteral("--format"), QStringLiteral("{{json .}}")});
+                                   {QStringLiteral("images"), QStringLiteral("--format"), QStringLiteral("{{json .}}")},
+                                   kQueryTimeoutMs, &done);
+    if (ok)
+        *ok = done;
     if (raw.isEmpty())
         return out;
     const QStringList lines = raw.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
@@ -157,12 +173,16 @@ QVariantList DockerService::queryImages()
 }
 
 // `docker system df` per-type usage (Images/Containers/Local Volumes/Build Cache).
-QVariantMap DockerService::queryDisk()
+QVariantMap DockerService::queryDisk(bool *ok)
 {
     QVariantMap out;
+    bool done = false;
     const QString raw = runCapture(QStringLiteral("docker"),
                                    {QStringLiteral("system"), QStringLiteral("df"),
-                                    QStringLiteral("--format"), QStringLiteral("{{json .}}")});
+                                    QStringLiteral("--format"), QStringLiteral("{{json .}}")},
+                                   kQueryTimeoutMs, &done);
+    if (ok)
+        *ok = done;
     if (raw.isEmpty())
         return out;
     const QStringList lines = raw.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
@@ -182,12 +202,16 @@ QVariantMap DockerService::queryDisk()
 }
 
 // Live resource usage for running containers, keyed by container name.
-QVariantMap DockerService::queryStats()
+QVariantMap DockerService::queryStats(bool *ok)
 {
     QVariantMap out;
+    bool done = false;
     const QString raw = runCapture(QStringLiteral("docker"),
                                    {QStringLiteral("stats"), QStringLiteral("--no-stream"),
-                                    QStringLiteral("--format"), QStringLiteral("{{json .}}")});
+                                    QStringLiteral("--format"), QStringLiteral("{{json .}}")},
+                                   kQueryTimeoutMs, &done);
+    if (ok)
+        *ok = done;
     if (raw.isEmpty())
         return out;
     const QStringList lines = raw.split(QLatin1Char('\n'), Qt::SkipEmptyParts);
@@ -210,7 +234,7 @@ QVariantMap DockerService::queryStats()
     return out;
 }
 
-QString DockerService::queryLogs(const QString &name, int tail)
+QString DockerService::queryLogs(const QString &name, int tail, bool *ok)
 {
     // Merged channels: container stdout and stderr both arrive here.
     QProcess p;
@@ -218,7 +242,10 @@ QString DockerService::queryLogs(const QString &name, int tail)
     p.start(QStringLiteral("docker"),
             {QStringLiteral("logs"), QStringLiteral("--tail"), QString::number(tail),
              QStringLiteral("--timestamps"), name});
-    if (!p.waitForFinished(15000))
+    const bool done = p.waitForFinished(30000);
+    if (ok)
+        *ok = done && p.exitCode() == 0;
+    if (!done)
         return QStringLiteral("docker logs timed out");
     return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
 }
@@ -227,6 +254,25 @@ DockerService::DockerService(QObject *parent) : QObject(parent)
 {
     // Scan once at startup (off the GUI thread) so the page has data cached.
     refresh();
+}
+
+void DockerService::applyScan(const QVariantMap &engine, const QVariantList &containers,
+                              bool containersOk, const QVariantList &images, bool imagesOk,
+                              const QVariantMap &disk, bool diskOk, const QString &error)
+{
+    m_engine = engine;
+    if (containersOk)
+        m_containers = containers;
+    if (imagesOk)
+        m_images = images;
+    if (diskOk)
+        m_disk = disk;
+    emit engineChanged();
+    emit containersChanged();
+    emit imagesChanged();
+    emit diskChanged();
+    if (!error.isEmpty())
+        emit errorMessage(error);
 }
 
 void DockerService::refresh()
@@ -238,23 +284,22 @@ void DockerService::refresh()
 
     QThread *thread = QThread::create([this]() {
         const QVariantMap engine = queryEngine();
+        // Daemon down: empty lists are the truth. Daemon slow: a failed
+        // query keeps its cached data instead of blanking the page.
         const bool up = engine.value(QStringLiteral("available")).toBool();
-        const QVariantList containers = up ? queryContainers() : QVariantList{};
-        const QVariantList images = up ? queryImages() : QVariantList{};
-        const QVariantMap disk = up ? queryDisk() : QVariantMap{};
+        bool psOk = !up, imgOk = !up, dfOk = !up;
+        QString error;
+        const QVariantList containers = up ? queryContainers(&psOk) : QVariantList{};
+        const QVariantList images = up ? queryImages(&imgOk) : QVariantList{};
+        const QVariantMap disk = up ? queryDisk(&dfOk) : QVariantMap{};
+        if (up && (!psOk || !imgOk || !dfOk))
+            error = QStringLiteral("docker answered slowly — showing cached data, Rescan to retry");
         QMetaObject::invokeMethod(
             this,
-            [this, engine, containers, images, disk]() {
-                m_engine = engine;
-                m_containers = containers;
-                m_images = images;
-                m_disk = disk;
+            [this, engine, containers, psOk, images, imgOk, disk, dfOk, error]() {
+                applyScan(engine, containers, psOk, images, imgOk, disk, dfOk, error);
                 m_busy = false;
                 emit busyChanged();
-                emit engineChanged();
-                emit containersChanged();
-                emit imagesChanged();
-                emit diskChanged();
             },
             Qt::QueuedConnection);
     });
@@ -262,37 +307,33 @@ void DockerService::refresh()
     thread->start();
 }
 
-bool DockerService::control(const QStringList &args)
+bool DockerService::control(const QStringList &args, bool quiet)
 {
     if (m_busy)
         return false;
     m_busy = true;
-    emit busyChanged();
+    if (!quiet)
+        emit busyChanged();
 
-    QThread *thread = QThread::create([this, args]() {
+    QThread *thread = QThread::create([this, args, quiet]() {
         QString error;
         if (!runOk(QStringLiteral("docker"), args))
             error = QStringLiteral("docker ") + args.join(QLatin1Char(' ')) + QStringLiteral(" failed");
         const QVariantMap engine = queryEngine();
         const bool up = engine.value(QStringLiteral("available")).toBool();
-        const QVariantList containers = up ? queryContainers() : QVariantList{};
-        const QVariantList images = up ? queryImages() : QVariantList{};
-        const QVariantMap disk = up ? queryDisk() : QVariantMap{};
+        bool psOk = !up, imgOk = !up, dfOk = !up;
+        const QVariantList containers = up ? queryContainers(&psOk) : QVariantList{};
+        const QVariantList images = up ? queryImages(&imgOk) : QVariantList{};
+        const QVariantMap disk = up ? queryDisk(&dfOk) : QVariantMap{};
+        if (error.isEmpty() && up && (!psOk || !imgOk || !dfOk))
+            error = QStringLiteral("docker answered slowly — showing cached data, Rescan to retry");
         QMetaObject::invokeMethod(
             this,
-            [this, engine, containers, images, disk, error]() {
-                m_engine = engine;
-                m_containers = containers;
-                m_images = images;
-                m_disk = disk;
+            [this, engine, containers, psOk, images, imgOk, disk, dfOk, error, quiet]() {
+                applyScan(engine, containers, psOk, images, imgOk, disk, dfOk, error);
                 m_busy = false;
-                emit busyChanged();
-                emit engineChanged();
-                emit containersChanged();
-                emit imagesChanged();
-                emit diskChanged();
-                if (!error.isEmpty())
-                    emit errorMessage(error);
+                if (!quiet)
+                    emit busyChanged();
             },
             Qt::QueuedConnection);
     });
@@ -335,7 +376,8 @@ bool DockerService::controlGroup(const QStringList &names, const QString &action
 
 bool DockerService::removeImage(const QString &id)
 {
-    return control({QStringLiteral("rmi"), id});
+    // Quiet: per-item Removing indicator instead of the global spinner.
+    return control({QStringLiteral("rmi"), id}, true);
 }
 
 bool DockerService::prune()
@@ -362,24 +404,18 @@ bool DockerService::startEngine()
             error = QStringLiteral("colima start failed");
         const QVariantMap engine = queryEngine();
         const bool up = engine.value(QStringLiteral("available")).toBool();
-        const QVariantList containers = up ? queryContainers() : QVariantList{};
-        const QVariantList images = up ? queryImages() : QVariantList{};
-        const QVariantMap disk = up ? queryDisk() : QVariantMap{};
+        bool psOk = !up, imgOk = !up, dfOk = !up;
+        const QVariantList containers = up ? queryContainers(&psOk) : QVariantList{};
+        const QVariantList images = up ? queryImages(&imgOk) : QVariantList{};
+        const QVariantMap disk = up ? queryDisk(&dfOk) : QVariantMap{};
+        if (error.isEmpty() && up && (!psOk || !imgOk || !dfOk))
+            error = QStringLiteral("docker answered slowly — showing cached data, Rescan to retry");
         QMetaObject::invokeMethod(
             this,
-            [this, engine, containers, images, disk, error]() {
-                m_engine = engine;
-                m_containers = containers;
-                m_images = images;
-                m_disk = disk;
+            [this, engine, containers, psOk, images, imgOk, disk, dfOk, error]() {
+                applyScan(engine, containers, psOk, images, imgOk, disk, dfOk, error);
                 m_busy = false;
                 emit busyChanged();
-                emit engineChanged();
-                emit containersChanged();
-                emit imagesChanged();
-                emit diskChanged();
-                if (!error.isEmpty())
-                    emit errorMessage(error);
             },
             Qt::QueuedConnection);
     });
@@ -431,12 +467,19 @@ bool DockerService::stopEngine()
 
 void DockerService::fetchStats()
 {
+    // The 5s poll must not pile up when the daemon answers slowly.
+    if (m_statsBusy.exchange(true))
+        return;
     QThread *thread = QThread::create([this]() {
-        const QVariantMap stats = queryStats();
+        bool ok = false;
+        const QVariantMap stats = queryStats(&ok);
         QMetaObject::invokeMethod(
-            this, [this, stats]() {
-                m_stats = stats;
-                emit statsChanged();
+            this, [this, stats, ok]() {
+                m_statsBusy = false;
+                if (ok) {
+                    m_stats = stats;
+                    emit statsChanged();
+                }
             },
             Qt::QueuedConnection);
     });
@@ -446,10 +489,20 @@ void DockerService::fetchStats()
 
 void DockerService::fetchLogs(const QString &name, int tail)
 {
+    // The 3s follow-poll must not pile up when the daemon answers slowly.
+    if (m_logsBusy.exchange(true))
+        return;
     QThread *thread = QThread::create([this, name, tail]() {
-        const QString logs = queryLogs(name, tail);
+        bool ok = false;
+        const QString logs = queryLogs(name, tail, &ok);
         QMetaObject::invokeMethod(
-            this, [this, name, logs]() { emit logsReady(name, logs); },
+            this, [this, name, logs, ok]() {
+                m_logsBusy = false;
+                if (ok)
+                    emit logsReady(name, logs);
+                else
+                    emit logsError(QStringLiteral("docker logs timed out for %1").arg(name));
+            },
             Qt::QueuedConnection);
     });
     connect(thread, &QThread::finished, thread, &QObject::deleteLater);
