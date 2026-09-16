@@ -41,7 +41,7 @@ Per-command overrides edited in the in-app dialog (name, executable, working dir
 _Avoid_: run config file, launch profile
 
 **MCP server (trun)**:
-The app itself speaking MCP over stdio (`trun-app --mcp`), exposing projects, commands, run controls and logs to AI agents.
+The app itself speaking MCP over stdio (`trun --mcp`), exposing projects, commands, run controls and logs to AI agents.
 _Avoid_: plugin, extension
 
 **MCP entry**:

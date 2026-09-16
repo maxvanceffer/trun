@@ -16,13 +16,13 @@ A typical dev setup means a terminal tab per project: `npm run dev` here, `compo
 - **Run configurations** — override executable, args, workdir, env or allow-multiple per command.
 - **Leave running** — quit the app and keep servers alive; on next start trun reattaches to them automatically.
 - **Databases & Docker** — start local Postgres/MySQL/Mongo/Redis and inspect Docker containers from the sidebar.
-- **MCP server for AI agents** — `trun-app --mcp` exposes projects, commands, run controls and logs over MCP/stdio, so coding agents can run your stack themselves.
+- **MCP server for AI agents** — `trun --mcp` exposes projects, commands, run controls and logs over MCP/stdio, so coding agents can run your stack themselves.
 - **In-app updates** — trun checks GitHub Releases and installs new versions with one restart.
 
 ## Install (macOS)
 
 1. Download `trun-<version>-macos-arm64.dmg` from [Releases](https://github.com/maxvanceffer/trun/releases).
-2. Open it and drag `trun-app` into **Applications**.
+2. Open it and drag `trun` into **Applications**.
 
 ![trun installer](docs/screenshots/installer.png)
 
@@ -46,7 +46,7 @@ Requires Qt 6.5+ (Quick, QuickControls2, Widgets, Svg, Network) and CMake 3.16+.
 cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
 cmake --build build --config Release --target trun-app
 # dev run:
-./build/trun-app.app/Contents/MacOS/trun-app
+./build/trun.app/Contents/MacOS/trun
 ```
 
 Tests:

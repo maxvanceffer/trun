@@ -117,6 +117,8 @@ if(APPLE)
         MACOSX_BUNDLE_BUNDLE_VERSION ${PROJECT_VERSION}
         MACOSX_BUNDLE_SHORT_VERSION_STRING ${PROJECT_VERSION}
         MACOSX_BUNDLE_ICON_FILE "trun"
+        # Output file name: trun.app (target stays trun-app).
+        OUTPUT_NAME "trun"
     )
     # Dock/Finder icon: assets/icons/trun.icns -> Contents/Resources.
     set(APP_ICON_MACOS "${CMAKE_SOURCE_DIR}/assets/icons/trun.icns")
@@ -126,9 +128,9 @@ if(APPLE)
     # main.cpp loads QML/icons from files next to the binary
     # (exePath + "/qml/main.qml", exePath + "/icons"), so ship them in the bundle.
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/qml"
-        DESTINATION "trun-app.app/Contents/MacOS")
+        DESTINATION "trun.app/Contents/MacOS")
     install(DIRECTORY "${CMAKE_SOURCE_DIR}/assets/icons"
-        DESTINATION "trun-app.app/Contents/MacOS")
+        DESTINATION "trun.app/Contents/MacOS")
 endif()
 
 if(APPLE)

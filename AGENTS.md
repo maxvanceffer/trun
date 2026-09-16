@@ -60,14 +60,13 @@
 - **DO** use `QUrl::fromLocalFile(...)` only for development file paths
 
 ### App management during development/testing
-- **ALWAYS kill existing instances** before launching a new build: `killall trun-app` or `pkill -f trun-app`
+- **ALWAYS kill existing instances** before launching a new build: `killall trun` or `pkill -f "trun.app"`
 - **NEVER** leave old instances running — they confuse debugging since you can't tell which build is producing the output
-- **RULE**: Every `open build/trun-app` must be preceded by `killall trun-app 2>/dev/null`
+- **RULE**: Every `open build/trun.app` must be preceded by `killall trun 2>/dev/null`
 
 ### Icon path discovery for Qt apps
 - QCoreApplication::applicationDirPath() returns the directory containing the executable
-- For flat build: `build/trun-app` → dir is `build/` → icons at `build/icons/` → `exePath + "/icons"`
-- For macOS bundle: `trun-app.app/Contents/MacOS/trun-app` → dir is `Contents/MacOS/` → icons at `Contents/icons/` → `exePath + "/../icons"`
+- For macOS bundle: `trun.app/Contents/MacOS/trun` → dir is `Contents/MacOS/` → icons at `Contents/MacOS/icons` → `exePath + "/icons"`
 - Always try multiple paths with `QFile::exists()` fallback — don't guess
 
 ## Skills (Навыки) и MCP-серверы

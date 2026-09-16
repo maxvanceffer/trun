@@ -61,27 +61,27 @@ jobs:
       - name: Deploy Qt into bundle
         # NOTE: macdeployqt prints ERROR lines for optional QML modules it cannot
         # resolve (VirtualKeyboard, Qt3D, Pdf, …) — harmless, the app doesn't use them.
-        run: macdeployqt dist/trun-app.app -qmldir=qml
+        run: macdeployqt dist/trun.app -qmldir=qml
 
       - name: Ad-hoc sign (until Apple Developer ID is set up)
         run: |
-          codesign --force --deep --sign - dist/trun-app.app
-          codesign --verify --deep dist/trun-app.app
+          codesign --force --deep --sign - dist/trun.app
+          codesign --verify --deep dist/trun.app
 
       # TODO(after joining Apple Developer Program): replace the ad-hoc sign step above with:
       #   1. import the Developer ID Application certificate from
       #      secrets.APPLE_CERTIFICATE (base64 .p12) + secrets.APPLE_CERT_PASSWORD
-      #   2. codesign --deep --force --options runtime --sign "Developer ID Application: ..." dist/trun-app.app
+      #   2. codesign --deep --force --options runtime --sign "Developer ID Application: ..." dist/trun.app
       #   3. attach stapled ticket:
       #      xcrun notarytool submit <dmg> --apple-id <id> --team-id <team> \
       #        --password ${{ secrets.APPLE_APP_PASSWORD }} --wait
       #      xcrun stapler staple <dmg>
 
       - name: Pack .zip (for the future in-app updater)
-        run: ditto -c -k --keepParent dist/trun-app.app 'trun-${{ steps.ver.outputs.version }}-macos-arm64.zip'
+        run: ditto -c -k --keepParent dist/trun.app 'trun-${{ steps.ver.outputs.version }}-macos-arm64.zip'
 
       - name: Pack .dmg (Finder background + drag-to-Applications)
-        # dist/ holds only trun-app.app (QWINDOWKIT_INSTALL=OFF in CMakeLists).
+        # dist/ holds only trun.app (QWINDOWKIT_INSTALL=OFF in CMakeLists).
         # Icon layout matches assets/dmg design: trun at (160,214),
         # Applications link at (480,214), window 640x400.
         # NOTE: create-dmg 1.x ignores the @2x background sibling, the 1x
@@ -92,8 +92,8 @@ jobs:
           create-dmg --volname 'trun ${{ steps.ver.outputs.version }}' \
             --background 'assets/dmg/dmg-background.png' \
             --window-pos 200 120 --window-size 640 400 \
-            --icon-size 128 --icon 'trun-app.app' 160 214 \
-            --hide-extension 'trun-app.app' \
+            --icon-size 128 --icon 'trun.app' 160 214 \
+            --hide-extension 'trun.app' \
             --app-drop-link 480 214 \
             'trun-${{ steps.ver.outputs.version }}-macos-arm64.dmg' dist/
 

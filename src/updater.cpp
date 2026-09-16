@@ -56,7 +56,7 @@ bool Updater::canInstall() const
     QDir bundleDir(QCoreApplication::applicationDirPath());
     if (!bundleDir.cdUp() || !bundleDir.cdUp())
         return false;
-    // Contents/MacOS -> trun-app.app; only auto-replace released installs.
+    // Contents/MacOS -> trun.app; only auto-replace released installs.
     if (!bundleDir.dirName().endsWith(QStringLiteral(".app"), Qt::CaseInsensitive))
         return false;
     return bundleDir.absolutePath().startsWith(QStringLiteral("/Applications/"));
@@ -272,7 +272,7 @@ void Updater::onExtractFinished(int exitCode, QProcess::ExitStatus exitStatus)
         proc->deleteLater();
 
     const QString workDir = updateWorkDir() + QStringLiteral("/install");
-    const QString bundleSrc = workDir + QStringLiteral("/trun-app.app");
+    const QString bundleSrc = workDir + QStringLiteral("/trun.app");
     if (exitStatus != QProcess::NormalExit || exitCode != 0
         || !QDir(bundleSrc).exists()) {
         setError(tr("Could not unpack the update. Try downloading it manually."));
