@@ -392,6 +392,7 @@ Window {
             anchors.fill: parent
             cornerRadius: root.windowRadius
             visible: root.activeView === "dashboard"
+            onUpdateRequested: updateDialog.openDialog()
         }
 
         // Any workspace change (rescan, new root) drops the open detail page:

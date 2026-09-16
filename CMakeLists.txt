@@ -74,11 +74,10 @@ qt_add_qml_module(trun-app
         qml/RunConfigDialog.qml
         qml/McpSetupDialog.qml
         qml/UpdateDialog.qml
+        qml/UpdateAlert.qml
         qml/TrafficLights.qml
         qml/DatabasesPage.qml
         qml/DockerPage.qml
-        qml/BusyLabel.qml
-        qml/Spinner.qml
     RESOURCES
         qml.qrc
 )

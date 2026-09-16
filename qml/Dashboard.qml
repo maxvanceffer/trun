@@ -37,6 +37,13 @@ Rectangle {
     // Host machine metrics (absent in tests that load this file standalone).
     readonly property var stats: (typeof systemStats !== "undefined") ? systemStats : null
 
+    // Updater presence (absent in tests that load this file standalone).
+    readonly property bool hasUpdater: typeof updater !== "undefined"
+    readonly property bool hasUpdate: dashboard.hasUpdater && updater.updateAvailable
+    readonly property string updateVersion: dashboard.hasUpdater ? updater.latestVersion : ""
+
+    signal updateRequested()
+
     readonly property string cpuText: (stats && stats.cpuUsage >= 0)
         ? Math.round(stats.cpuUsage * 100) + "%" : "—"
     readonly property string ramUsedText: stats ? kbToText(stats.memoryUsedKb) : "—"
@@ -677,11 +684,35 @@ Rectangle {
             }
         }
 
+        // Update alert capsule between stats and activity. Collapses to
+        // zero height when no update is available (layout unchanged).
+        Item {
+            id: updateAlertSlot
+            objectName: "updateAlertSlot"
+            anchors.top: systemStatsRow.bottom
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.leftMargin: Theme.spacingLg
+            anchors.rightMargin: Theme.spacingLg
+            height: dashboard.hasUpdate ? 44 + Theme.spacingMd : 0
+            visible: dashboard.hasUpdate
+            clip: true
+
+            UpdateAlert {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.bottom: parent.bottom
+                messageText: qsTr("Update to v%1 available").arg(dashboard.updateVersion)
+                actionText: qsTr("Update")
+                iconSource: iconBaseUrl + (Theme.isDark ? "rotate-cw-dark.png" : "rotate-cw.png")
+                onActionTriggered: dashboard.updateRequested()
+            }
+        }
+
         // Activity below the stats: recently run + currently running commands.
         Item {
             id: activityView
             objectName: "activityView"
-            anchors.top: systemStatsRow.bottom
+            anchors.top: updateAlertSlot.bottom
             anchors.topMargin: Theme.spacingXl
             anchors.left: parent.left
             anchors.right: parent.right
