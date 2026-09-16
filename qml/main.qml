@@ -81,6 +81,12 @@ Window {
 
     property string activeView: "dashboard"
 
+    // Opened from the native app menu (trun → Check for Updates…)
+    // on macOS, or from the footer update button elsewhere.
+    function openUpdateDialog() {
+        updateDialog.openDialog()
+    }
+
     // Full quit path (tray menu). With a tray, closing the window only hides it.
     function requestQuit() {
         if (commandExecutor.runningCount() === 0) {

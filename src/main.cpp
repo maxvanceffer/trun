@@ -21,6 +21,9 @@
 #include "dockerservice.h"
 #include "updater.h"
 #include <QWKQuick/qwkquickglobal.h>
+#ifdef Q_OS_MACOS
+#include "macappmenu.h"
+#endif
 
 // Injected by CMake (-DTRUN_VERSION=); fallback for ad-hoc builds.
 #ifndef TRUN_VERSION
@@ -166,6 +169,11 @@ int main(int argc, char *argv[])
     // Silent update check, throttled to once per day. Surfaces as a badge
     // on the footer update button when a newer release exists.
     updater->checkOnStartup();
+
+#ifdef Q_OS_MACOS
+    // Native app-menu entry (trun → Check for Updates…), inserted above Quit.
+    installMacAppMenu(rootObj, updater);
+#endif
 
     // System tray: closing the window hides it, Quit lives in the tray menu.
     // Leaked intentionally for the app lifetime.

@@ -325,6 +325,9 @@ Rectangle {
         IconButton {
             id: updateButton
             objectName: "updateButton"
+            // macOS uses the native app menu (trun → Check for Updates…);
+            // the footer button remains for platforms without one.
+            visible: Qt.platform.os !== "osx"
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             iconSource: iconBaseUrl + (Theme.isDark ? "cog-dark.png" : "cog.png")

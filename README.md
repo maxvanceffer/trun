@@ -33,7 +33,10 @@ A typical dev setup means a terminal tab per project: `npm run dev` here, `compo
 1. On first launch the wizard asks for your code folder, scans it and shows everything found.
 2. Press **Run** on any command card — or pin it to get Run/Stop actions in the tray menu.
 3. Click a card to open the detail page: live console, CPU/RAM stats, Run/Stop.
-4. Check for updates any time via the gear button in the sidebar footer.
+4. Updates install themselves: trun checks GitHub Releases once a day and shows
+   **trun → Check for Updates…** (renamed to **Update to vX…** when a release
+   is available) in the menu bar — on other platforms use the gear button in
+   the sidebar footer.
 
 ## Build from source
 

@@ -132,7 +132,7 @@ if(APPLE)
 endif()
 
 if(APPLE)
-    target_sources(trun-app PRIVATE src/mactitlebar.mm src/databaseservice_macos.cpp)
+    target_sources(trun-app PRIVATE src/mactitlebar.mm src/databaseservice_macos.cpp src/macappmenu.h src/macappmenu.mm)
     target_link_libraries(trun-app PRIVATE "-framework AppKit")
 elseif(UNIX)
     target_sources(trun-app PRIVATE src/databaseservice_linux.cpp)
