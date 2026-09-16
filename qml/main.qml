@@ -87,6 +87,19 @@ Window {
         updateDialog.openDialog()
     }
 
+    // "Add projects" footer button: a throwaway wizard window instance.
+    // The dialog deletes itself on close or after a successful scan.
+    Component {
+        id: addProjectsComponent
+        WizardWindow {}
+    }
+
+    function openAddProjects() {
+        var dialog = addProjectsComponent.createObject(root)
+        dialog.projectConfigured.connect(function() { dialog.destroy() })
+        dialog.closing.connect(function() { dialog.destroy() })
+    }
+
     // Full quit path (tray menu). With a tray, closing the window only hides it.
     function requestQuit() {
         if (commandExecutor.runningCount() === 0) {
@@ -308,6 +321,7 @@ Window {
 
         onMcpConfigureRequested: mcpSetupDialog.openDialog()
         onUpdateCheckRequested: updateDialog.openDialog()
+        onAddProjectsRequested: root.openAddProjects()
         onDashboardRequested: {
             root.activeView = "dashboard"
             dashboardView.goHome()

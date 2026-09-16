@@ -47,6 +47,9 @@ public:
 
     Q_INVOKABLE void scanFolder(const QString &rootPath);
     Q_INVOKABLE bool restoreFromCache();
+    // True when the folder (or its parent/subfolder) already contributes
+    // projects to the workspace — rescanning it would only duplicate.
+    Q_INVOKABLE bool isFolderKnown(const QString &folderPath) const;
     Q_INVOKABLE void selectProject(const QString &projectId);
     // Adds a user-defined command to a folder. Attaches to the folder's
     // scanned project, or to a "custom" pseudo-project when the folder has

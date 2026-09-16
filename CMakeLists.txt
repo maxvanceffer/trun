@@ -82,6 +82,16 @@ qt_add_qml_module(trun-app
 )
 set_source_files_properties(qml/Theme.qml PROPERTIES QT_QML_SINGLETON_TYPE TRUE)
 
+# Wizard artwork (dark plate + Retina). Loaded via qrc:/assets/wizard/...
+# (qml.qrc itself is only embedded as a blob by the QML module above,
+# so files needed at runtime must be compiled here explicitly.)
+qt_add_resources(trun-app "wizard_art"
+    PREFIX "/"
+    FILES
+        assets/wizard/wizard-bg.png
+        assets/wizard/wizard-bg@2x.png
+)
+
 # Copy QML files and icons next to the binary (for development).
 # With MACOSX_BUNDLE that is Contents/MacOS, mirroring the release layout.
 file(COPY ${CMAKE_SOURCE_DIR}/qml DESTINATION ${CMAKE_BINARY_DIR})

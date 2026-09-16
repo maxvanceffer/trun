@@ -132,6 +132,27 @@ namespace {
 constexpr int kCacheVersion = 3; // bump when scan output format changes
 }
 
+bool ProjectService::isFolderKnown(const QString &folderPath) const
+{
+    QString actualPath = QUrl(folderPath).toLocalFile();
+    if (actualPath.isEmpty())
+        actualPath = folderPath;
+    const QString clean = QDir::cleanPath(actualPath);
+    if (clean.isEmpty())
+        return false;
+    for (const QJsonObject &project : m_projects) {
+        const QString known = QDir::cleanPath(
+            project.value(QStringLiteral("project_path")).toString());
+        if (known.isEmpty())
+            continue;
+        if (clean == known
+            || clean.startsWith(known + QLatin1Char('/'))
+            || known.startsWith(clean + QLatin1Char('/')))
+            return true;
+    }
+    return false;
+}
+
 bool ProjectService::restoreFromCache()
 {
     if (!m_settings)

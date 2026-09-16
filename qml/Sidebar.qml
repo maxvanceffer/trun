@@ -31,6 +31,7 @@ Rectangle {
     signal dockerRequested()
     signal mcpConfigureRequested()
     signal updateCheckRequested()
+    signal addProjectsRequested()
     signal addCustomRequested(string folderPath)
     signal closeRequested()
     signal minimizeRequested()
@@ -320,6 +321,17 @@ Rectangle {
             tooltipText: qsTr("MCP servers")
             suppressTooltip: mcpMenu.visible
             onClicked: mcpMenu.visible = !mcpMenu.visible
+        }
+
+        IconButton {
+            id: addProjectsButton
+            objectName: "addProjectsButton"
+            anchors.left: mcpButton.right
+            anchors.leftMargin: Theme.spacingXs
+            anchors.verticalCenter: parent.verticalCenter
+            iconSource: iconBaseUrl + (Theme.isDark ? "folder-plus-dark.png" : "folder-plus.png")
+            tooltipText: qsTr("Add projects")
+            onClicked: sidebar.addProjectsRequested()
         }
 
         IconButton {
