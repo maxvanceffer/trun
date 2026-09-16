@@ -4,7 +4,8 @@ import QtQuick.Layouts 6.5
 
 Item {
     id: delegateRoot
-    height: Theme.sidebarRowHeight
+    // Root nodes breathe: a small gap separates top-level folders.
+    height: Theme.sidebarRowHeight + (depth === 0 ? Theme.spacingXs : 0)
     implicitWidth: 200
     implicitHeight: Theme.sidebarRowHeight
 
@@ -60,7 +61,7 @@ Item {
     Rectangle {
         id: bgRect
         anchors.top: parent.top
-        anchors.bottom: parent.bottom
+        height: Theme.sidebarRowHeight
         anchors.left: contentRow.left
         anchors.leftMargin: -Theme.spacingXs
         anchors.right: parent.right
@@ -96,7 +97,7 @@ Item {
         anchors.leftMargin: depth * Theme.sidebarIndent
         anchors.right: parent.right
         anchors.rightMargin: Theme.spacingXs
-        anchors.verticalCenter: parent.verticalCenter
+        anchors.verticalCenter: bgRect.verticalCenter
         spacing: Theme.spacingXs
 
         // Expand/collapse indicator for folders (zero size for leaves):
@@ -147,15 +148,27 @@ Item {
             visible: delegateRoot.isProject && _commands && _commands.length > 0
         }
 
-        // Add custom command (folders only, right-aligned, on hover)
-        IconButton {
-            id: addButton
+        // Add custom command (folders only, right-aligned, fades in on hover)
+        Item {
             Layout.alignment: Qt.AlignVCenter
-            visible: delegateRoot.isFolder
-                && (mouseArea.containsMouse || hovered)
-            iconSource: iconBaseUrl + (Theme.isDark ? "square-plus-dark.png" : "square-plus.png")
-            tooltipText: qsTr("Add custom command")
-            onClicked: delegateRoot.addCustomRequested(delegateRoot._folderPath)
+            Layout.preferredWidth: Theme.sidebarRowHeight
+            Layout.preferredHeight: Theme.sidebarRowHeight
+            visible: opacity > 0
+            opacity: (delegateRoot.isFolder
+                      && (mouseArea.containsMouse || addButton.hovered)) ? 1 : 0
+
+            Behavior on opacity {
+                NumberAnimation { duration: 150 }
+            }
+
+            IconButton {
+                id: addButton
+                anchors.fill: parent
+                visible: delegateRoot.isFolder
+                iconSource: iconBaseUrl + (Theme.isDark ? "square-plus-dark.png" : "square-plus.png")
+                tooltipText: qsTr("Add custom command")
+                onClicked: delegateRoot.addCustomRequested(delegateRoot._folderPath)
+            }
         }
     }
 }

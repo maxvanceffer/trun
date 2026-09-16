@@ -113,31 +113,6 @@ Frame {
                 font.pixelSize: 10
                 Layout.alignment: Qt.AlignVCenter
             }
-
-            IconButton {
-                Layout.alignment: Qt.AlignVCenter
-                Layout.preferredWidth: 24
-                Layout.preferredHeight: 24
-                iconSource: iconBaseUrl + (Theme.isDark ? "square-menu-dark.png" : "square-menu.png")
-                tooltipText: pinned ? qsTr("Unpin from tray menu") : qsTr("Pin to tray menu")
-                active: pinned
-                property string projectId: (projectService.activeProject.id || "").toString()
-                // Depends on pinnedCommands so the tint follows pinnedChanged
-                property var pinList: projectService.pinnedCommands
-                property bool pinned: {
-                    if (projectId === "" || card.command.id === undefined) return false
-                    for (var i = 0; i < pinList.length; ++i) {
-                        if (pinList[i].projectId === projectId
-                            && pinList[i].commandId === card.command.id)
-                            return true
-                    }
-                    return false
-                }
-                onClicked: {
-                    if (projectId === "" || card.command.id === undefined) return
-                    projectService.setPinned(projectId, card.command.id, !pinned)
-                }
-            }
         }
 
         Label {

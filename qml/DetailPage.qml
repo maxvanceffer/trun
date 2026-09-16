@@ -358,7 +358,7 @@ Item {
             anchors.left: configurationBtn.right
             anchors.leftMargin: 8
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: iconBaseUrl + "folder-32px.png"
+            iconSource: iconBaseUrl + (Theme.isDark ? "folder-code-dark.png" : "folder-code.png")
             tooltipText: qsTr("Reveal in Finder")
             onClicked: commandExecutor.revealFolder(projectService.activeProject.project_path || "")
         }

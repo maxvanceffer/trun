@@ -251,6 +251,7 @@ Rectangle {
     Item {
         id: sectionHeader
         anchors.top: dockerHeader.bottom
+        anchors.topMargin: Theme.spacingMd
         anchors.left: parent.left
         anchors.right: parent.right
         height: Theme.sidebarRowHeight
