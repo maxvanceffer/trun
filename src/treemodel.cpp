@@ -117,23 +117,36 @@ QmlTreeItem *QmlTreeModel::getItem(const QModelIndex &idx) const
 
 void QmlTreeModel::setRootPath(const QString &rootPath)
 {
-    m_rootPath = QDir::cleanPath(rootPath);
-    if (m_rootPath.isEmpty() || m_rootPath == QLatin1String("."))
-        return;
+    setRootPaths(QStringList{QDir::cleanPath(rootPath)});
+}
 
-    // Rebuild the visible root node from scratch.
+void QmlTreeModel::setRootPaths(const QStringList &rootPaths)
+{
+    m_rootPaths.clear();
+    for (const QString &p : rootPaths) {
+        const QString clean = QDir::cleanPath(p);
+        if (!clean.isEmpty() && clean != QLatin1String(".")
+            && !m_rootPaths.contains(clean))
+            m_rootPaths.append(clean);
+    }
+    m_rootPath = m_rootPaths.value(0);
+
     beginResetModel();
     delete rootItem;
     rootItem = new QmlTreeItem(QmlTreeItem::Folder);
+    m_rootFolders.clear();
     endResetModel();
 
-    const int row = rootItem->childCount();
-    beginInsertRows(QModelIndex(), row, row);
-    m_rootFolder = new QmlTreeItem(QmlTreeItem::Folder, rootItem);
-    m_rootFolder->m_name = folderDisplayName(m_rootPath);
-    m_rootFolder->m_path = m_rootPath;
-    rootItem->appendChild(m_rootFolder);
-    endInsertRows();
+    for (const QString &root : m_rootPaths) {
+        const int row = rootItem->childCount();
+        beginInsertRows(QModelIndex(), row, row);
+        QmlTreeItem *node = new QmlTreeItem(QmlTreeItem::Folder, rootItem);
+        node->m_name = folderDisplayName(root);
+        node->m_path = root;
+        rootItem->appendChild(node);
+        m_rootFolders.append(node);
+        endInsertRows();
+    }
 }
 
 QString QmlTreeModel::folderDisplayName(const QString &absoluteFolderPath)
@@ -157,10 +170,27 @@ QModelIndex QmlTreeModel::indexForItem(QmlTreeItem *item) const
 QmlTreeItem *QmlTreeModel::ensureFolder(const QString &absoluteFolderPath)
 {
     const QString abs = QDir::cleanPath(absoluteFolderPath);
-    const QString root = m_rootPath.isEmpty() ? abs : QDir::cleanPath(m_rootPath);
 
-    // Everything hangs off the visible root node when there is one.
-    QmlTreeItem *baseParent = m_rootFolder ? m_rootFolder : rootItem;
+    // Route to the deepest workspace root containing the path.
+    QmlTreeItem *baseParent = nullptr;
+    QString root;
+    int bestLength = -1;
+    for (QmlTreeItem *node : m_rootFolders) {
+        const QString rp = QDir::cleanPath(node->path());
+        if ((abs == rp || abs.startsWith(rp + QLatin1Char('/')))
+            && rp.size() > bestLength) {
+            bestLength = rp.size();
+            baseParent = node;
+            root = rp;
+        }
+    }
+    if (!baseParent) {
+        // Outside every known root (e.g. a custom-command folder):
+        // hang it directly off the invisible root, like the legacy
+        // no-root behavior.
+        baseParent = rootItem;
+        root = abs;
+    }
 
     // A project that *is* the root lives directly under the root node.
     if (abs == root)
@@ -203,7 +233,7 @@ void QmlTreeModel::clear()
     beginResetModel();
     delete rootItem;
     rootItem = new QmlTreeItem(QmlTreeItem::Folder);
-    m_rootFolder = nullptr;
+    m_rootFolders.clear();
     endResetModel();
 }
 

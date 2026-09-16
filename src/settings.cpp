@@ -46,6 +46,18 @@ void Settings::setRootFolder(const QString &folder)
     emit workspaceChanged();
 }
 
+QStringList Settings::rootFolders() const
+{
+    return m_settings.value(QStringLiteral("rootFolders")).toStringList();
+}
+
+void Settings::setRootFolders(const QStringList &folders)
+{
+    m_settings.setValue(QStringLiteral("rootFolders"), folders);
+    m_settings.sync();
+    emit workspaceChanged();
+}
+
 QJsonArray Settings::projects() const
 {
     const QByteArray raw = m_settings.value(QStringLiteral("projects")).toByteArray();
@@ -76,6 +88,7 @@ void Settings::setCacheVersion(int version)
 void Settings::clearWorkspace()
 {
     m_settings.remove(QStringLiteral("rootFolder"));
+    m_settings.remove(QStringLiteral("rootFolders"));
     m_settings.remove(QStringLiteral("projects"));
     m_settings.remove(QStringLiteral("configuredFolder"));
     m_settings.sync();

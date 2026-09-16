@@ -289,4 +289,24 @@ target_link_libraries(test_projectservice PRIVATE
     Qt6::Test
 )
 
+# Multi-root workspace tests (append on scan, per-root stale drop, migration)
+add_executable(test_roots
+    src/test_roots.cpp
+    src/projectservice.h
+    src/projectservice.cpp
+    src/commandexecutor.h
+    src/commandexecutor.cpp
+    src/projectlistmodel.h
+    src/projectlistmodel.cpp
+    src/treemodel.h
+    src/treemodel.cpp
+    src/settings.h
+    src/settings.cpp
+)
+target_include_directories(test_roots PRIVATE src)
+target_link_libraries(test_roots PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+
 

@@ -37,6 +37,10 @@ class ProjectService : public QObject {
 public:
     explicit ProjectService(ProjectListModel *model, QObject *parent = nullptr);
 
+    // All workspace roots, primary first. Scanning a folder appends it;
+    // rescanning one root replaces only that root's projects.
+    Q_INVOKABLE QStringList rootPaths() const { return m_rootPaths; }
+
     Q_INVOKABLE QmlTreeModel *treeModel() const { return m_treeModel; }
     QString rootPath() const { return m_rootPath; }
 
@@ -148,6 +152,11 @@ private:
     Settings *m_settings = nullptr;
     CommandExecutor *m_executor = nullptr;
     QString m_rootPath;
+    QStringList m_rootPaths; // every scanned root, cleaned, deduplicated
     static const QStringList s_manifests;
     static const QStringList s_skipDirs;
+    // True when path equals root or lives under it (both cleaned).
+    static bool isUnderRoot(const QString &path, const QString &root);
+    // Copy of a project with user-added (custom:) commands removed.
+    static QJsonObject stripCustomCommands(const QJsonObject &project);
 };

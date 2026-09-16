@@ -20,6 +20,10 @@ public:
 
     Q_INVOKABLE QString rootFolder() const;
     Q_INVOKABLE void setRootFolder(const QString &folder);
+    // All workspace roots (multi-root). The legacy single rootFolder()
+    // stays as the primary root for backward compatibility.
+    QStringList rootFolders() const;
+    void setRootFolders(const QStringList &folders);
     QJsonArray projects() const;
     void setProjects(const QJsonArray &projects);
     int cacheVersion() const;

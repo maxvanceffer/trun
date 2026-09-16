@@ -75,6 +75,8 @@ public:
     ~QmlTreeModel() override;
 
     void setRootPath(const QString &rootPath);
+    // Multiple workspace roots: one top-level node per root.
+    void setRootPaths(const QStringList &rootPaths);
     Q_INVOKABLE void addProject(
         const QString &projectPath,
         const QString &name,
@@ -96,10 +98,11 @@ private:
     QModelIndex indexForItem(QmlTreeItem *item) const;
     QmlTreeItem* getItem(const QModelIndex &index) const;
     QmlTreeItem* rootItem;
-    QString m_rootPath;
+    QString m_rootPath; // primary root (first of m_rootPaths), kept for compat
+    QStringList m_rootPaths;
 
-    // Visible top-level node representing the chosen root folder.
-    QmlTreeItem* m_rootFolder = nullptr;
+    // Visible top-level nodes, one per workspace root.
+    QList<QmlTreeItem*> m_rootFolders;
 
     QmlTreeItem* ensureFolder(const QString &absoluteFolderPath);
 

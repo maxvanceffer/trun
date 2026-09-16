@@ -118,14 +118,62 @@ void ProjectService::scanFolder(const QString &rootPath) {
 
     QString actualPath = QUrl(rootPath).toLocalFile();
     if (actualPath.isEmpty()) actualPath = rootPath;
-    m_rootPath = QDir::cleanPath(actualPath);
+    const QString clean = QDir::cleanPath(actualPath);
+    // Multi-root: a new folder is appended, rescanning a known one
+    // replaces only that root's projects.
+    if (!clean.isEmpty() && !m_rootPaths.contains(clean))
+        m_rootPaths.append(clean);
+    m_rootPath = m_rootPaths.value(0, clean);
     logMessage("info", "scan", "Starting scan: " + actualPath);
     recursiveScan(actualPath);
+    // Merge: keep scanned projects from the other roots, drop customs here
+    // (they re-merge from m_customCommands in applyProjects).
+    QList<QJsonObject> merged;
+    QSet<QString> seenIds;
+    for (const QJsonObject &p : m_projects) {
+        if (p.value(QStringLiteral("manifest")).toString() == QStringLiteral("custom"))
+            continue;
+        if (isUnderRoot(p.value(QStringLiteral("project_path")).toString(), clean))
+            continue;
+        merged.append(stripCustomCommands(p));
+        seenIds.insert(p.value(QStringLiteral("id")).toString());
+    }
+    for (const QJsonObject &p : m_scanned) {
+        const QString id = p.value(QStringLiteral("id")).toString();
+        if (seenIds.contains(id))
+            continue;
+        seenIds.insert(id);
+        merged.append(p);
+    }
+    m_scanned = merged;
     applyProjects(m_scanned);
     if (!m_projects.isEmpty())
-        persistWorkspace(actualPath);
+        persistWorkspace(clean);
     emit scanComplete(m_projects.size());
     logMessage("info", "scan", "Scan complete: " + QString::number(m_projects.size()) + " projects found");
+}
+
+bool ProjectService::isUnderRoot(const QString &path, const QString &root)
+{
+    const QString cleanPath = QDir::cleanPath(path);
+    const QString cleanRoot = QDir::cleanPath(root);
+    if (cleanPath.isEmpty() || cleanRoot.isEmpty())
+        return false;
+    return cleanPath == cleanRoot
+        || cleanPath.startsWith(cleanRoot + QLatin1Char('/'));
+}
+
+QJsonObject ProjectService::stripCustomCommands(const QJsonObject &project)
+{
+    QJsonObject out = project;
+    QJsonArray cmds;
+    for (const QJsonValue &v : project.value(QStringLiteral("commands")).toArray()) {
+        if (!v.toObject().value(QStringLiteral("id")).toString().startsWith(
+                QStringLiteral("custom:")))
+            cmds.append(v);
+    }
+    out[QStringLiteral("commands")] = cmds;
+    return out;
 }
 
 namespace {
@@ -164,15 +212,26 @@ bool ProjectService::restoreFromCache()
     }
 
     const QString root = m_settings->rootFolder();
-    if (root.isEmpty() || !QDir(root).exists()) {
+    QStringList roots = m_settings->rootFolders();
+    if (roots.isEmpty() && !root.isEmpty())
+        roots.append(QDir::cleanPath(root)); // legacy single-root cache
+    // Drop roots that vanished from disk; keep the rest.
+    for (int i = roots.size() - 1; i >= 0; --i) {
+        if (!QDir(roots.at(i)).exists())
+            roots.removeAt(i);
+    }
+    if (roots.isEmpty()) {
         logMessage("warn", "cache", "Root folder missing, cache discarded");
         m_settings->clearWorkspace();
         return false;
     }
 
     if (m_settings->cacheVersion() != kCacheVersion) {
-        logMessage("info", "cache", "Cache format changed, rescanning: " + root);
-        scanFolder(root);
+        logMessage("info", "cache",
+                   "Cache format changed, rescanning: " + roots.join(QStringLiteral(", ")));
+        m_rootPaths.clear();
+        for (const QString &r : roots)
+            scanFolder(r);
         return !m_projects.isEmpty();
     }
 
@@ -206,7 +265,8 @@ bool ProjectService::restoreFromCache()
         m_settings->setProjects(remaining);
     }
 
-    m_rootPath = QDir::cleanPath(root);
+    m_rootPaths = roots;
+    m_rootPath = m_rootPaths.value(0);
     applyProjects(kept);
     logMessage("info", "cache", "Restored " + QString::number(kept.size()) + " projects");
     return true;
@@ -216,20 +276,18 @@ void ProjectService::persistWorkspace(const QString &rootPath)
 {
     if (!m_settings)
         return;
-    m_settings->setRootFolder(rootPath);
+    const QString clean = QDir::cleanPath(rootPath);
+    if (!clean.isEmpty() && !m_rootPaths.contains(clean))
+        m_rootPaths.append(clean);
+    m_rootPath = m_rootPaths.value(0, clean);
+    m_settings->setRootFolder(m_rootPath);
+    m_settings->setRootFolders(m_rootPaths);
     m_settings->setCacheVersion(kCacheVersion);
     QJsonArray arr;
     for (auto project : m_projects) {
         if (project.value(QStringLiteral("manifest")).toString() == QStringLiteral("custom"))
             continue; // user commands persist separately, never in the scan cache
-        QJsonArray cmds;
-        for (const QJsonValue &v : project.value(QStringLiteral("commands")).toArray()) {
-            if (!v.toObject().value(QStringLiteral("id")).toString().startsWith(
-                    QStringLiteral("custom:")))
-                cmds.append(v);
-        }
-        project[QStringLiteral("commands")] = cmds;
-        arr.append(project);
+        arr.append(stripCustomCommands(project));
     }
     m_settings->setProjects(arr);
 }
@@ -262,7 +320,7 @@ void ProjectService::applyProjects(const QList<QJsonObject> &projects)
         emit activeProjectCommandsChanged();
     }
     m_treeModel->clear();
-    m_treeModel->setRootPath(m_rootPath);
+    m_treeModel->setRootPaths(m_rootPaths);
     for (const auto &project : m_projects) {
         m_treeModel->addProject(
             project.value(QStringLiteral("project_path")).toString(),
