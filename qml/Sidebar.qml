@@ -1,7 +1,6 @@
 import QtQuick
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
-import QtQuick.Effects
 
 Rectangle {
     id: sidebar
@@ -302,7 +301,7 @@ Rectangle {
         }
     }
 
-    // Footer with the MCP placeholder button
+    // Footer: MCP dialog shortcut, add projects, update check
     Item {
         id: footer
         anchors.left: parent.left
@@ -320,8 +319,7 @@ Rectangle {
             anchors.verticalCenter: parent.verticalCenter
             iconSource: iconBaseUrl + (Theme.isDark ? "mcp-light-32px.png" : "mcp-dark-32px.png")
             tooltipText: qsTr("MCP servers")
-            suppressTooltip: mcpMenu.visible
-            onClicked: mcpMenu.visible = !mcpMenu.visible
+            onClicked: sidebar.mcpConfigureRequested()
         }
 
         IconButton {
@@ -347,150 +345,6 @@ Rectangle {
             tooltipText: updater.updateAvailable ? qsTr("Update available") : qsTr("Check for updates")
             active: updater.updateAvailable
             onClicked: sidebar.updateCheckRequested()
-        }
-    }
-
-    // Click-outside catcher: closes the menu, sits under it
-    MouseArea {
-        anchors.fill: parent
-        visible: mcpMenu.visible
-        z: 98
-        onClicked: mcpMenu.visible = false
-    }
-
-    // Custom context menu: fixed size, theme colors, rounded, hairline
-    // border, soft shadow.
-    // (QtQuick.Controls Menu with a custom delegate collapses to ~0 width,
-    // so the menu is built from primitives instead.)
-    Item {
-        id: mcpMenu
-        objectName: "mcpMenu"
-        visible: false
-        z: 99
-        // Right of the button (28px) with a 6px gap, bottom-aligned
-        // with the footer. Anchored to footer (a sibling), not the button.
-        anchors.left: footer.left
-        anchors.leftMargin: 34
-        anchors.bottom: footer.bottom
-        width: 180
-        height: menuColumn.implicitHeight + 12
-
-        Rectangle {
-            id: mcpMenuCard
-            anchors.fill: parent
-            radius: 8
-            color: Theme.cardBackground
-            border.color: Theme.border
-            border.width: 1
-        }
-
-        MultiEffect {
-            anchors.fill: mcpMenuCard
-            source: mcpMenuCard
-            shadowEnabled: true
-            shadowColor: Qt.rgba(0, 0, 0, 0.5)
-            shadowBlur: 1.0
-            shadowVerticalOffset: 4
-        }
-
-        Column {
-            id: menuColumn
-            anchors.fill: parent
-            anchors.margins: 6
-            spacing: 2
-
-            Rectangle {
-                width: parent.width
-                height: 32
-                radius: 6
-                color: enableAllRow.hovered
-                    ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
-                    : "transparent"
-
-                Label {
-                    anchors.fill: parent
-                    anchors.leftMargin: 10
-                    text: qsTr("Enable all")
-                    color: Theme.textPrimary
-                    font.pixelSize: 12
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                MouseArea {
-                    id: enableAllRow
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        mcpMenu.visible = false
-                        sidebar.setAllMcpEnabled(true)
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 32
-                radius: 6
-                color: disableAllRow.hovered
-                    ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
-                    : "transparent"
-
-                Label {
-                    anchors.fill: parent
-                    anchors.leftMargin: 10
-                    text: qsTr("Disable all")
-                    color: Theme.textPrimary
-                    font.pixelSize: 12
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                MouseArea {
-                    id: disableAllRow
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        mcpMenu.visible = false
-                        sidebar.setAllMcpEnabled(false)
-                    }
-                }
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 1
-                color: Theme.border
-            }
-
-            Rectangle {
-                width: parent.width
-                height: 32
-                radius: 6
-                color: configureRow.hovered
-                    ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
-                    : "transparent"
-
-                Label {
-                    anchors.fill: parent
-                    anchors.leftMargin: 10
-                    text: qsTr("Configure…")
-                    color: Theme.textPrimary
-                    font.pixelSize: 12
-                    verticalAlignment: Text.AlignVCenter
-                }
-
-                MouseArea {
-                    id: configureRow
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    onClicked: {
-                        mcpMenu.visible = false
-                        sidebar.mcpConfigureRequested()
-                    }
-                }
-            }
         }
     }
 

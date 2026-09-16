@@ -17,11 +17,14 @@
         <file>qml/ProgressRing.qml</file>
         <file>qml/RunConfigDialog.qml</file>
         <file>qml/McpSetupDialog.qml</file>
+        <file>qml/McpMenu.qml</file>
         <file>qml/UpdateDialog.qml</file>
         <file>qml/UpdateAlert.qml</file>
         <file>qml/TrafficLights.qml</file>
         <file>qml/DatabasesPage.qml</file>
         <file>qml/DockerPage.qml</file>
+        <file>qml/BusyLabel.qml</file>
+        <file>qml/Spinner.qml</file>
         <file>assets/wizard/wizard-bg.png</file>
         <file>assets/wizard/wizard-bg@2x.png</file>
     </qresource>

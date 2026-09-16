@@ -375,7 +375,14 @@ Item {
                         radius: Theme.radiusSm
                         color: rescanMouse.containsMouse
                             ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
-                            : "transparent"
+                            : Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0)
+
+                        Behavior on color {
+                            ColorAnimation {
+                                duration: Theme.animHover
+                                easing.type: Theme.easingStandard
+                            }
+                        }
                     }
 
                     Image {

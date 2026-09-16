@@ -158,7 +158,7 @@ Item {
                       && (mouseArea.containsMouse || addButton.hovered)) ? 1 : 0
 
             Behavior on opacity {
-                NumberAnimation { duration: 150 }
+                NumberAnimation { duration: Theme.animHover; easing.type: Theme.easingStandard }
             }
 
             IconButton {

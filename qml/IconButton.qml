@@ -35,8 +35,15 @@ Button {
     background: Rectangle {
         color: (hover.hovered || iconButton.hovered || iconButton.active)
             ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
-            : "transparent"
+            : Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0)
         radius: Theme.radiusSm
+
+        Behavior on color {
+            ColorAnimation {
+                duration: Theme.animHover
+                easing.type: Theme.easingStandard
+            }
+        }
     }
 
     contentItem: Image {

@@ -602,27 +602,17 @@ void QmlTests::test_mcp_setup_dialog_loads()
 void QmlTests::test_mcp_menu_geometry()
 {
     QQmlEngine engine;
-    QmlTreeModel model;
-    McpAgentManager mcpAgents;
-    engine.rootContext()->setContextProperty("treeModel", &model);
-    engine.rootContext()->setContextProperty("projectService", g_projectService);
-    engine.rootContext()->setContextProperty("logModel", g_logModel);
-    engine.rootContext()->setContextProperty("mcpAgents", &mcpAgents);
-    engine.rootContext()->setContextProperty(
-        "iconBaseUrl", QUrl::fromLocalFile(QDir::currentPath() + "/icons/").toString());
 
     QQmlComponent component(&engine,
-        QUrl::fromLocalFile(sourceQmlPath("Sidebar.qml")));
+        QUrl::fromLocalFile(sourceQmlPath("McpMenu.qml")));
     QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
         ? QString("not ready") : component.errors().first().toString()));
 
-    QObject *obj = component.create();
-    QVERIFY(obj != nullptr);
-    QScopedPointer<QObject> guard(obj);
-
-    QObject *menu = obj->findChild<QObject*>(QStringLiteral("mcpMenu"));
+    QObject *menu = component.create();
     QVERIFY(menu != nullptr);
-    // Custom primitive-built menu: fixed size by construction
+    QScopedPointer<QObject> guard(menu);
+
+    // Standalone menu component: fixed size by construction
     QCOMPARE(menu->property("width").toReal(), 180.0);
     menu->setProperty("visible", true);
     QTest::qWait(50);
@@ -633,6 +623,11 @@ void QmlTests::test_mcp_menu_geometry()
     QVERIFY2(menu->property("width").toReal() >= 150.0,
              qPrintable(QString("menu too narrow: %1").arg(menu->property("width").toReal())));
     QVERIFY(menu->property("height").toReal() >= 60.0);
+    // Action signals for the instantiator to wire up
+    const QMetaObject *meta = menu->metaObject();
+    QVERIFY(meta->indexOfSignal("enableAllRequested()") != -1);
+    QVERIFY(meta->indexOfSignal("disableAllRequested()") != -1);
+    QVERIFY(meta->indexOfSignal("configureRequested()") != -1);
 }
 
 void QmlTests::test_stat_card_loads()

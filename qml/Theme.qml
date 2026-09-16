@@ -66,4 +66,14 @@ QtObject {
     readonly property int fontSizeSm: 11
     readonly property int fontSizeMd: 12
     readonly property int fontSizeLg: 13
+
+    // ─── Motion ────────────────────────────────────────────────────────
+    // Single source of truth for animation timings so hover/press fades
+    // stay consistent across controls (IconButton ghost, rescan, fades).
+    readonly property int animFast: 120
+    readonly property int animHover: 160
+    readonly property int animMedium: 220
+    readonly property int animSlide: 260
+    readonly property int animSlow: 350
+    readonly property int easingStandard: Easing.OutCubic
 }

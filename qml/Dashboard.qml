@@ -640,8 +640,8 @@ Rectangle {
                 visible: opacity > 0
                 opacity: dashboard.activePage === "dashboard" ? 1 : 0
                 x: dashboard.activePage === "dashboard" ? 0 : -Theme.spacingXl
-                Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard } }
+                Behavior on x { NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard } }
 
                 // Host machine metrics: hostname, CPU and RAM.
                 RowLayout {
@@ -983,8 +983,8 @@ Rectangle {
                 visible: opacity > 0
                 opacity: dashboard.activePage === "project" ? 1 : 0
                 x: dashboard.activePage === "project" ? 0 : Theme.spacingXl
-                Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard } }
+                Behavior on x { NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard } }
 
                 GridLayout {
                     id: commandsGrid
@@ -1021,8 +1021,8 @@ Rectangle {
                 visible: opacity > 0
                 opacity: dashboard.activePage === "detail" ? 1 : 0
                 x: dashboard.activePage === "detail" ? 0 : Theme.spacingXl
-                Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard } }
+                Behavior on x { NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard } }
 
                 DetailPage {
                     id: detailPage
@@ -1044,8 +1044,8 @@ Rectangle {
                 visible: opacity > 0
                 opacity: dashboard.activePage === "databases" ? 1 : 0
                 x: dashboard.activePage === "databases" ? 0 : Theme.spacingXl
-                Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard } }
+                Behavior on x { NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard } }
 
                 DatabasesPage {
                     id: databasesPage
@@ -1062,8 +1062,8 @@ Rectangle {
                 visible: opacity > 0
                 opacity: dashboard.activePage === "docker" ? 1 : 0
                 x: dashboard.activePage === "docker" ? 0 : Theme.spacingXl
-                Behavior on opacity { NumberAnimation { duration: 220; easing.type: Easing.OutCubic } }
-                Behavior on x { NumberAnimation { duration: 260; easing.type: Easing.OutCubic } }
+                Behavior on opacity { NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard } }
+                Behavior on x { NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard } }
 
                 DockerPage {
                     id: dockerPage
