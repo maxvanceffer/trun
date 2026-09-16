@@ -2,7 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Shapes
 
-// Circular progress: dimmed disc, 2px gap, dimmed track, full-color arc.
+// Circular progress: dimmed disc, 3px gap, dimmed track, full-color arc.
 Item {
     id: ring
 
@@ -16,12 +16,12 @@ Item {
     implicitWidth: 48
     implicitHeight: 48
 
-    // Inner disc (2px gap to the ring)
+    // Inner disc (3px gap to the ring)
     Rectangle {
         anchors.centerIn: parent
-        width: 34
-        height: 34
-        radius: 17
+        width: 32
+        height: 32
+        radius: 16
         color: ring.dimmed
     }
 
@@ -36,10 +36,14 @@ Item {
 
     // Progress arc in full color, concentric with the track (r=21.5).
     // Hidden at zero: a degenerate arc would leave a round-cap dot.
+    // MSAA layer: Shape flattens curves into facets; multisampling keeps
+    // the arc smooth instead of blocky. Cheap at 48px.
     Shape {
         id: arcShape
         anchors.fill: parent
         antialiasing: true
+        layer.enabled: true
+        layer.samples: 4
         visible: ring.clamped > 0
 
         readonly property real ringRadius: 21.5
