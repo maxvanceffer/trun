@@ -12,6 +12,12 @@ Window {
     visible: true
     width: 600
     height: 500
+    // Fixed size: the artwork and the absolutely positioned captions
+    // are laid out for exactly 600x500, resizing only misaligns them.
+    minimumWidth: 600
+    maximumWidth: 600
+    minimumHeight: 500
+    maximumHeight: 500
     title: qsTr("Configure Project Folder")
     // Plate ground fallback; the artwork covers the window fully.
     color: "#1d1d16"
