@@ -21,6 +21,10 @@ private slots:
     void test_add_project_cargo_toml();
     void test_add_folder_implicit();
     void test_folder_with_child_project();
+    void test_hybrid_folder_gets_manifests_entry();
+    void test_top_level_root_gets_manifests_entry();
+    void test_manifests_entry_stack_on_second_manifest();
+    void test_manifests_entry_when_subfolder_comes_first();
     void test_qml_sidebar_component_loads();
     void test_qml_tree_item_delegate_loads();
     void test_icons_in_assets();

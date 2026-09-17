@@ -55,6 +55,9 @@ QtObject {
     readonly property int iconLg: 24
     readonly property int iconXs: 12
 
+    // Form controls (UiInput, UiSelectMenu, …): одна высота на весь кит.
+    readonly property int controlHeight: 32
+
     // Sidebar geometry (shared by the sidebar and the main window layout)
     readonly property int sidebarWidth: 240
     readonly property int sidebarInset: 16     // left rail for titles and list

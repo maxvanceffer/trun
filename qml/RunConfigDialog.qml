@@ -244,7 +244,7 @@ Dialog {
 
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
-                iconSource: iconBaseUrl + "folder-32px.png"
+                iconSource: iconBaseUrl + (Theme.isDark ? "folders-dark.png" : "folders.png")
                 tooltipText: qsTr("Browse")
                 onClicked: workdirPicker.open()
             }

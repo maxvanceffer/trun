@@ -311,16 +311,17 @@ Window {
         anchors.left: parent.left
         width: 240
 
-        // Real signal handler: the delegate emits sidebar.projectSelected,
-        // and selecting another project must drop the open detail page.
-        onProjectSelected: function(projectId) {
-            logModel.add("info", "app", "Selecting project: " + projectId)
+        // Real signal handler: the delegate emits sidebar.folderSelected,
+        // and selecting another folder must drop the open detail page.
+        onFolderSelected: function(folderPath) {
+            logModel.add("info", "app", "Selecting folder: " + folderPath)
             root.activeView = "dashboard"
-            dashboardView.openProject()
+            dashboardView.openFolder(folderPath)
         }
 
         onMcpConfigureRequested: mcpSetupDialog.openDialog()
         onUpdateCheckRequested: updateDialog.openDialog()
+        onSettingsRequested: settingsDialog.openDialog()
         onAddProjectsRequested: root.openAddProjects()
         onDashboardRequested: {
             root.activeView = "dashboard"
@@ -333,9 +334,6 @@ Window {
         onDockerRequested: {
             root.activeView = "dashboard"
             dashboardView.openDocker()
-        }
-        onAddCustomRequested: function(folderPath) {
-            newCommandDialog.openCreate(folderPath)
         }
 
         // Own traffic lights (untitled window has no native ones):
@@ -361,6 +359,10 @@ Window {
 
     UpdateDialog {
         id: updateDialog
+    }
+
+    SettingsDialog {
+        id: settingsDialog
     }
 
     RunConfigDialog {
@@ -393,6 +395,19 @@ Window {
             cornerRadius: root.windowRadius
             visible: root.activeView === "dashboard"
             onUpdateRequested: updateDialog.openDialog()
+            onAddCustomRequested: function(folderPath) {
+                newCommandDialog.openCreate(folderPath)
+            }
+        }
+
+        // Entry highlight lives only on the open folder page: leaving it
+        // (dashboard, detail, databases, docker) clears the selection.
+        Connections {
+            target: dashboardView
+            function onActivePageChanged() {
+                if (dashboardView.activePage !== "folder")
+                    sidebar.clearFolderSelection()
+            }
         }
 
         // Any workspace change (rescan, new root) drops the open detail page:

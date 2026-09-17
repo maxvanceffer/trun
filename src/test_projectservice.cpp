@@ -36,6 +36,10 @@ private slots:
     void testManifestNameFromPackageJson();
     void testSameFolderMultipleManifests();
     void testTreeGroupsManifestsUnderOneFolder();
+    void testRootFolderWithOnlyManifestStaysVisible();
+    void testSelectFolderGroupsManifests();
+    void testFolderCrumbs();
+    void testFolderDisplayNameGitFallback();
     void testAddCustomCommandAttachesToProject();
     void testAddCustomCommandPseudoProject();
     void testAddCustomCommandUniqueIds();
@@ -476,15 +480,129 @@ void TestProjectService::testTreeGroupsManifestsUnderOneFolder() {
     const QModelIndex backend = findChildByName(tree, rootIdx, "backend");
     QVERIFY(backend.isValid());
     QCOMPARE(tree->data(backend, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
-    QCOMPARE(tree->rowCount(backend), 2);
-
-    QVERIFY(findChildByName(tree, backend, "acme-js").isValid());
-    QVERIFY(findChildByName(tree, backend, "acme/php").isValid());
+    QCOMPARE(tree->data(backend, QmlTreeModel::HasManifestsRole).toBool(), true);
+    // Leaf folders with manifests have no children: no project rows, no entry
+    QCOMPARE(tree->rowCount(backend), 0);
 
     const QModelIndex editor = findChildByName(tree, rootIdx, "editor");
     QVERIFY(editor.isValid());
-    QCOMPARE(tree->rowCount(editor), 1);
-    QVERIFY(findChildByName(tree, editor, "acme-editor").isValid());
+    QCOMPARE(tree->data(editor, QmlTreeModel::HasManifestsRole).toBool(), true);
+    QCOMPARE(tree->rowCount(editor), 0);
+}
+
+void TestProjectService::testRootFolderWithOnlyManifestStaysVisible() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    QVERIFY(writeJson(tmp.path() + "/package.json", R"({"name":"solo"})"));
+
+    ProjectListModel model;
+    ProjectService service(&model);
+    service.scanFolder(tmp.path());
+
+    // The root itself holds the only manifest: visible root row plus
+    // one manifests entry beneath it
+    QAbstractItemModel *tree = service.treeModel();
+    QCOMPARE(tree->rowCount(), 1);
+    const QModelIndex rootIdx = tree->index(0, 0);
+    QVERIFY(rootIdx.isValid());
+    QCOMPARE(tree->data(rootIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
+    QCOMPARE(tree->data(rootIdx, QmlTreeModel::HasManifestsRole).toBool(), true);
+    QCOMPARE(tree->rowCount(rootIdx), 1);
+
+    const QModelIndex entryIdx = tree->index(0, 0, rootIdx);
+    QVERIFY(entryIdx.isValid());
+    QCOMPARE(tree->data(entryIdx, QmlTreeModel::ItemTypeRole).toString(), QString("manifests"));
+    QCOMPARE(tree->data(entryIdx, QmlTreeModel::ManifestRole).toString(), QString("package.json"));
+
+    service.selectFolder(tmp.path());
+    QCOMPARE(service.activeFolderProjects().size(), 1);
+    QCOMPARE(service.folderCrumbs(tmp.path()).size(), 1);
+}
+
+void TestProjectService::testSelectFolderGroupsManifests() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    QVERIFY(writeJson(tmp.path() + "/backend/package.json", R"({"name":"acme-js"})"));
+    QVERIFY(writeJson(tmp.path() + "/backend/composer.json", R"({"name":"acme/php"})"));
+    QVERIFY(writeJson(tmp.path() + "/editor/package.json", R"({"name":"acme-editor"})"));
+
+    ProjectListModel model;
+    ProjectService service(&model);
+    service.scanFolder(tmp.path());
+
+    service.selectFolder(tmp.path() + "/backend");
+    QCOMPARE(service.activeFolder().value("path").toString(),
+             QDir::cleanPath(tmp.path() + "/backend"));
+    QCOMPARE(service.activeFolder().value("name").toString(), QString("backend"));
+    QCOMPARE(service.activeFolderProjects().size(), 2);
+    QSet<QString> manifests;
+    for (const auto &p : service.activeFolderProjects())
+        manifests.insert(p.value("manifest").toString());
+    QCOMPARE(manifests, QSet<QString>({"package.json", "composer.json"}));
+
+    service.selectFolder(tmp.path() + "/editor");
+    QCOMPARE(service.activeFolderProjects().size(), 1);
+
+    // Unknown and empty paths are ignored
+    service.selectFolder(tmp.path() + "/ghost");
+    QCOMPARE(service.activeFolder().value("path").toString(),
+             QDir::cleanPath(tmp.path() + "/editor"));
+    service.selectFolder(QString());
+    QCOMPARE(service.activeFolder().value("path").toString(),
+             QDir::cleanPath(tmp.path() + "/editor"));
+
+    // Rescan keeps the folder selection with refreshed projects
+    service.scanFolder(tmp.path());
+    QCOMPARE(service.activeFolder().value("path").toString(),
+             QDir::cleanPath(tmp.path() + "/editor"));
+    QCOMPARE(service.activeFolderProjects().size(), 1);
+}
+
+void TestProjectService::testFolderCrumbs() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    QVERIFY(writeJson(tmp.path() + "/personizely/backend/package.json", R"({"name":"be"})"));
+
+    ProjectListModel model;
+    ProjectService service(&model);
+    service.scanFolder(tmp.path());
+
+    const QString backend = QDir::cleanPath(tmp.path() + "/personizely/backend");
+    const QVariantList crumbs = service.folderCrumbs(backend);
+    QCOMPARE(crumbs.size(), 2);
+    QCOMPARE(crumbs.at(0).toMap().value("name").toString(), QString("personizely"));
+    QCOMPARE(crumbs.at(0).toMap().value("path").toString(),
+             QDir::cleanPath(tmp.path() + "/personizely"));
+    QCOMPARE(crumbs.at(1).toMap().value("name").toString(), QString("backend"));
+    QCOMPARE(crumbs.at(1).toMap().value("path").toString(), backend);
+
+    // The root itself is a single crumb
+    const QVariantList rootCrumbs = service.folderCrumbs(tmp.path());
+    QCOMPARE(rootCrumbs.size(), 1);
+    QCOMPARE(rootCrumbs.at(0).toMap().value("path").toString(), QDir::cleanPath(tmp.path()));
+
+    // Outside known roots: single fallback segment
+    const QVariantList outside = service.folderCrumbs(QStringLiteral("/nope/nada"));
+    QCOMPARE(outside.size(), 1);
+    QCOMPARE(outside.at(0).toMap().value("path").toString(), QString("/nope/nada"));
+
+    QVERIFY(service.folderCrumbs(QString()).isEmpty());
+}
+
+void TestProjectService::testFolderDisplayNameGitFallback() {
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+
+    ProjectListModel model;
+    ProjectService service(&model);
+    QCOMPARE(service.folderDisplayName(tmp.path() + "/plain"), QString("plain"));
+
+    QVERIFY(QDir(tmp.path()).mkpath("repo/.git"));
+    QFile config(tmp.path() + "/repo/.git/config");
+    QVERIFY(config.open(QIODevice::WriteOnly));
+    config.write("[remote \"origin\"]\n\turl = git@github.com:acme/widget.git\n");
+    config.close();
+    QCOMPARE(service.folderDisplayName(tmp.path() + "/repo"), QString("widget"));
 }
 
 void TestProjectService::testAddCustomCommandAttachesToProject()

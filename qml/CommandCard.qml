@@ -5,14 +5,22 @@ import QtQuick.Layouts 1.5
 Frame {
     id: card
     property var command: {}
-    property bool selected: false
+    // Owning project id ("<path>/<manifest>"). Empty means the active
+    // project (single-project contexts); the folder page always sets it.
+    property string projectId: ""
 
     // Running state is derived from the executor (covers live runs and
     // processes adopted from a previous session), never stored locally.
     // Full run key: bare command ids repeat across projects.
-    readonly property string fullId: (projectService.activeProject.id || "")
+    readonly property string effectiveProjectId: card.projectId !== ""
+        ? card.projectId : (projectService.activeProject.id || "")
+    readonly property string fullId: card.effectiveProjectId
         + "|" + (card.command.id || "")
     property bool running: commandExecutor.runningCommandIds.indexOf(card.fullId) >= 0
+
+    // Frame follows hover only (Recent parity): no selection memory, so no
+    // stuck frame after returning from a detail page. card.hovered is the
+    // built-in Control property.
 
     width: 250
     // Explicit height: Frame does not derive implicit height from contentItem,
@@ -24,15 +32,35 @@ Frame {
     background: Rectangle {
         radius: 8
         color: card.running ? "#1a1a1a" : Theme.cardBackground
-        border.color: card.selected ? Theme.accent : Theme.border
+        border.color: card.hovered ? Theme.accent : Theme.border
         border.width: 1
+    }
+
+    // Glow ring OUTSIDE the card (margins -3): grid content keeps a
+    // matching inner padding so the ring never touches the scroll
+    // viewport edge (see folderPage grids). Fades in/out with the hover.
+    Rectangle {
+        anchors.fill: parent
+        anchors.margins: -3
+        radius: 11
+        color: "transparent"
+        border.color: Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.45)
+        border.width: 2
+        opacity: card.hovered ? 1 : 0
+
+        Behavior on opacity {
+            NumberAnimation {
+                duration: 250
+                easing.type: Theme.easingStandard
+            }
+        }
     }
 
     property int cmdPid: 0
     property string memText: "—"
 
     function selectThis() {
-        dashboard.selectCommand(card.command.id)
+        dashboard.selectCommand(card.fullId)
     }
 
     function refreshStats() {
@@ -59,7 +87,12 @@ Frame {
         anchors.fill: parent
         hoverEnabled: true
         cursorShape: Qt.PointingHandCursor
-        onClicked: dashboard.openDetail(card.command.id)
+        onClicked: {
+            // Detail pages resolve the command through the active project,
+            // so select ours first (synchronous) before opening the detail.
+            projectService.selectProject(card.effectiveProjectId)
+            dashboard.openDetail(card.fullId)
+        }
     }
 
     Timer {
@@ -121,6 +154,8 @@ Frame {
             font.pixelSize: 10
             elide: Text.ElideRight
             Layout.fillWidth: true
+            // Same x as the title above: status dot width + row spacing
+            Layout.leftMargin: 16
         }
 
     }

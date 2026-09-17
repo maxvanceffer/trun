@@ -9,6 +9,9 @@ class SystemStats : public QObject {
     Q_OBJECT
     Q_PROPERTY(QString hostName READ hostName CONSTANT)
     Q_PROPERTY(QString platform READ platform CONSTANT)
+    // Physical cores and logical threads (-1 when unknown).
+    Q_PROPERTY(int cpuCores READ cpuCores CONSTANT)
+    Q_PROPERTY(int cpuThreads READ cpuThreads CONSTANT)
     // 0..1, or -1 unknown
     Q_PROPERTY(qreal cpuUsage READ cpuUsage NOTIFY statsChanged)
     Q_PROPERTY(qreal memoryUsage READ memoryUsage NOTIFY statsChanged)
@@ -20,6 +23,8 @@ public:
 
     QString hostName() const { return m_hostName; }
     QString platform() const { return m_platform; }
+    int cpuCores() const { return m_cpuCores; }
+    int cpuThreads() const { return m_cpuThreads; }
     qreal cpuUsage() const { return m_cpuUsage; }
     qreal memoryUsage() const { return m_memoryUsage; }
     qlonglong memoryTotalKb() const { return m_memoryTotalKb; }
@@ -36,6 +41,8 @@ private:
 
     QString m_hostName;
     QString m_platform;
+    int m_cpuCores = -1;
+    int m_cpuThreads = -1;
     qreal m_cpuUsage = -1.0;
     qreal m_memoryUsage = -1.0;
     qlonglong m_memoryTotalKb = -1;

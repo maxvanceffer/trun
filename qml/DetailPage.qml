@@ -198,8 +198,13 @@ Item {
     }
 
     function formatConsoleRow(e) {
+        var msg = e.message || ""
+        // Жирные строки (SQL на десятки КБ) режем для глаз; полное тело
+        // остаётся в модели и копируется через «Длинные целиком».
+        if (!detailRoot.showLongFull && msg.length > 500)
+            msg = msg.slice(0, 500) + "… [обрезано]"
         return ConsoleFormat.formatLine(e.timestamp || "", e.target || "",
-            e.message || "", consoleColorFor(e.level || ""))
+            msg, consoleColorFor(e.level || ""))
     }
 
     function rebuildConsole() {
@@ -215,6 +220,36 @@ Item {
     // rows drift apart. One assignment point below instead.
     property string consoleHtml: ""
     onConsoleHtmlChanged: consoleTextEdit.text = consoleHtml
+
+    // Console filters (Variant A): search + time presets + chips from
+    // observed values. Engine lives in LogModel; here only the panel.
+    property string filterQuery: ""
+    property var selLevels: []
+    property var selChannels: []
+    property int sinceMin: -1
+    property bool showLongFull: false
+    readonly property var timeValues: [-1, 5, 10, 30]
+
+    function toggleSel(arr, v) {
+        var out = arr.slice()
+        var i = out.indexOf(v)
+        if (i < 0) out.push(v); else out.splice(i, 1)
+        return out
+    }
+
+    function applyLogFilters() {
+        commandLog.setFilters(filterQuery, selLevels, selChannels, sinceMin)
+    }
+
+    function resetLogFilters() {
+        filterQuery = ""
+        selLevels = []
+        selChannels = []
+        sinceMin = -1
+        searchField.text = ""
+        timeBox.currentIndex = 0
+        commandLog.resetFilters()
+    }
 
     function refreshStats() {
         if (commandId === "") return
@@ -235,6 +270,8 @@ Item {
         cpuText = "—"
         uptimeText = "—"
         ramFraction = -1
+        // Новый Command — новый поток: фильтры сбрасываем (session-only).
+        detailRoot.resetLogFilters()
         // The command object (and its default args) is derived from commandId
         // and only settles after bindings update, so load on the next tick.
         Qt.callLater(detailRoot.loadEffectiveConfig)
@@ -681,7 +718,7 @@ Item {
             anchors.leftMargin: 8
             anchors.rightMargin: 8
             anchors.topMargin: 8
-            height: 28
+            height: Theme.controlHeight
             spacing: 8
 
             Label {
@@ -692,7 +729,55 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
             }
 
-            Item { Layout.fillWidth: true }
+            UiInput {
+                id: searchField
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                placeholderText: qsTr("Filter text…")
+                onTextChanged: {
+                    detailRoot.filterQuery = text
+                    detailRoot.applyLogFilters()
+                }
+            }
+
+            UiSelectMenu {
+                id: timeBox
+                Layout.preferredWidth: 130
+                Layout.alignment: Qt.AlignVCenter
+                model: [qsTr("All time"), qsTr("5 min"), qsTr("10 min"), qsTr("30 min")]
+                currentIndex: 0
+                searchable: false
+                chevronSource: iconBaseUrl + (Theme.isDark ? "chevron-down-dark.png" : "chevron-down.png")
+                checkIconSource: iconBaseUrl + (Theme.isDark ? "check-dark.png" : "check.png")
+                onActivated: function(index) {
+                    detailRoot.sinceMin = detailRoot.timeValues[index]
+                    detailRoot.applyLogFilters()
+                }
+            }
+
+            UiCheckBox {
+                Layout.alignment: Qt.AlignVCenter
+                label: qsTr("Full lines")
+                checked: detailRoot.showLongFull
+                onToggled: function(on) {
+                    detailRoot.showLongFull = on
+                    detailRoot.rebuildConsole()
+                }
+            }
+
+            Label {
+                Layout.alignment: Qt.AlignVCenter
+                color: Theme.textMuted
+                font.pixelSize: 11
+                text: qsTr("Shown %1 of %2").arg(commandLog.shownCount).arg(commandLog.totalCount)
+            }
+
+            IconButton {
+                Layout.alignment: Qt.AlignVCenter
+                iconSource: iconBaseUrl + (Theme.isDark ? "funnel-x-dark.png" : "funnel-x.png")
+                tooltipText: qsTr("Reset filters")
+                onClicked: detailRoot.resetLogFilters()
+            }
 
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
@@ -702,9 +787,69 @@ Item {
             }
         }
 
-        Flickable {
-            id: consoleFlick
+        // Chips row (level/channel из потока) — второй строкой: в одну
+        // линию с шапкой не влезают, число чипсов растёт с потоком.
+        Flow {
+            id: chipsFlow
             anchors.top: detailConsoleHeader.bottom
+            anchors.topMargin: 4
+            anchors.left: parent.left
+            anchors.leftMargin: 8
+            anchors.right: parent.right
+            anchors.rightMargin: 8
+            spacing: 6
+
+                Repeater {
+                    // totalCount в условии — зависимость биндинга: чипсы
+                    // перестраиваются, когда поток приносит новые значения.
+                    model: commandLog.totalCount >= 0 ? commandLog.observedLevels() : []
+                    Button {
+                        text: modelData
+                        checkable: true
+                        checked: detailRoot.selLevels.indexOf(modelData) >= 0
+                        font.pixelSize: 11
+                        onClicked: {
+                            detailRoot.selLevels = detailRoot.toggleSel(detailRoot.selLevels, modelData)
+                            detailRoot.applyLogFilters()
+                        }
+                    }
+                }
+
+                Repeater {
+                    model: commandLog.totalCount >= 0 ? commandLog.observedChannels() : []
+                    Button {
+                        text: modelData
+                        checkable: true
+                        checked: detailRoot.selChannels.indexOf(modelData) >= 0
+                        font.pixelSize: 11
+                        onClicked: {
+                            detailRoot.selChannels = detailRoot.toggleSel(detailRoot.selChannels, modelData)
+                            detailRoot.applyLogFilters()
+                        }
+                    }
+                }
+            }
+
+        Label {
+            anchors.top: chipsFlow.bottom
+            anchors.topMargin: 12
+            anchors.horizontalCenter: parent.horizontalCenter
+            width: Math.min(parent.width - 32, 420)
+            wrapMode: Text.WordWrap
+            horizontalAlignment: Text.AlignHCenter
+            color: Theme.textMuted
+            font.pixelSize: 12
+            visible: commandLog.totalCount > 0 && commandLog.shownCount === 0
+            text: qsTr("No matches — loosen the filters.")
+                + (commandLog.hiddenUnparsedCount > 0
+                    ? " " + qsTr("Hidden unparsed lines: %1.").arg(commandLog.hiddenUnparsedCount) : "")
+        }
+
+        // Log viewport: recessed surface (darker than the card, like a
+        // terminal inside it), rounded, with a hairline border.
+        Rectangle {
+            id: consoleViewport
+            anchors.top: chipsFlow.bottom
             anchors.topMargin: 4
             anchors.bottom: parent.bottom
             anchors.bottomMargin: 8
@@ -712,6 +857,16 @@ Item {
             anchors.leftMargin: 8
             anchors.right: parent.right
             anchors.rightMargin: 8
+            radius: Theme.radiusSm
+            color: Theme.windowBackground
+            border.color: Theme.border
+            border.width: 1
+        }
+
+        Flickable {
+            id: consoleFlick
+            anchors.fill: consoleViewport
+            anchors.margins: 8
             contentWidth: width
             contentHeight: consoleTextEdit.height
             clip: true

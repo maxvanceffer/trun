@@ -22,6 +22,8 @@ private slots:
     void testProjectsAndCommands();
     void testReadLogEmpty();
     void testSearchLogsMonolog();
+    void testSearchLogsChannelAndHeader();
+    void testSearchLogsSinceMinutes();
     void testRunUnknown();
 
 private:
@@ -210,6 +212,72 @@ void TestMcpServer::testSearchLogsMonolog()
              QJsonObject{{QStringLiteral("project"), projectId},
                          {QStringLiteral("query"), QStringLiteral("plain line")}});
     QVERIFY(byQuery.value(QStringLiteral("text")).toString().contains(QStringLiteral("plain line")));
+}
+
+void TestMcpServer::testSearchLogsChannelAndHeader()
+{
+    auto fx = makeFixture();
+    QVERIFY(fx);
+    QVERIFY(QDir(fx->home.path()).mkpath(QStringLiteral("app/var/log")));
+    QFile manifest(fx->home.path() + QStringLiteral("/app/package.json"));
+    QVERIFY(manifest.open(QIODevice::WriteOnly));
+    manifest.write(R"({"name":"logapp","scripts":{"dev":"vite"}})");
+    manifest.close();
+    QFile log(fx->home.path() + QStringLiteral("/app/var/log/app.log"));
+    QVERIFY(log.open(QIODevice::WriteOnly));
+    log.write("[2026-09-10T10:00:00+00:00] app.INFO: all good\n"
+              "[2026-09-10T10:01:00+00:00] app.ERROR: boom failed\n"
+              "[2026-09-10T10:02:00+00:00] other.DEBUG: elsewhere\n");
+    log.close();
+    fx->service->scanFolder(fx->home.path());
+    const QString projectId = fx->service->projects().first().value(QStringLiteral("id")).toString();
+
+    const QJsonObject byChannel =
+        call(*fx, QStringLiteral("search_logs"),
+             QJsonObject{{QStringLiteral("project"), projectId},
+                         {QStringLiteral("channel"), QStringLiteral("app")}});
+    const QString channelText = byChannel.value(QStringLiteral("text")).toString();
+    QVERIFY(channelText.startsWith(QStringLiteral("# matched")));
+    QVERIFY(channelText.contains(QStringLiteral("boom failed")));
+    QVERIFY(!channelText.contains(QStringLiteral("elsewhere")));
+    QVERIFY(channelText.contains(QStringLiteral("# channels: app")));
+    QVERIFY(channelText.contains(QStringLiteral("truncated: no")));
+
+    const QJsonObject noChannel =
+        call(*fx, QStringLiteral("search_logs"),
+             QJsonObject{{QStringLiteral("project"), projectId},
+                         {QStringLiteral("channel"), QStringLiteral("nope")}});
+    QVERIFY(noChannel.value(QStringLiteral("text")).toString().contains(QStringLiteral("matched 0 of")));
+}
+
+void TestMcpServer::testSearchLogsSinceMinutes()
+{
+    auto fx = makeFixture();
+    QVERIFY(fx);
+    QVERIFY(QDir(fx->home.path()).mkpath(QStringLiteral("app/var/log")));
+    QFile manifest(fx->home.path() + QStringLiteral("/app/package.json"));
+    QVERIFY(manifest.open(QIODevice::WriteOnly));
+    manifest.write(R"({"name":"logapp","scripts":{"dev":"vite"}})");
+    manifest.close();
+    QFile log(fx->home.path() + QStringLiteral("/app/var/log/app.log"));
+    QVERIFY(log.open(QIODevice::WriteOnly));
+    // Даты в прошлом относительно времени прогона: узкое окно их отсекает.
+    log.write("[2026-09-10T10:01:00+00:00] app.ERROR: old failure\n");
+    log.close();
+    fx->service->scanFolder(fx->home.path());
+    const QString projectId = fx->service->projects().first().value(QStringLiteral("id")).toString();
+
+    const QJsonObject narrow =
+        call(*fx, QStringLiteral("search_logs"),
+             QJsonObject{{QStringLiteral("project"), projectId},
+                         {QStringLiteral("sinceMinutes"), 60}});
+    QVERIFY(!narrow.value(QStringLiteral("text")).toString().contains(QStringLiteral("old failure")));
+
+    const QJsonObject wide =
+        call(*fx, QStringLiteral("search_logs"),
+             QJsonObject{{QStringLiteral("project"), projectId},
+                         {QStringLiteral("sinceMinutes"), 60 * 24 * 30}});
+    QVERIFY(wide.value(QStringLiteral("text")).toString().contains(QStringLiteral("old failure")));
 }
 
 void TestMcpServer::testRunUnknown()

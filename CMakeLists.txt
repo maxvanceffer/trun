@@ -32,6 +32,8 @@ qt_add_executable(trun-app MACOSX_BUNDLE
     src/commandexecutor.h
     src/commandexecutor.cpp
     src/logmodel.h
+    src/logparser.h
+    src/logparser.cpp
     src/projectlistmodel.h
     src/projectlistmodel.cpp
     src/treemodel.h
@@ -75,12 +77,16 @@ qt_add_qml_module(trun-app
         qml/McpSetupDialog.qml
         qml/McpMenu.qml
         qml/UpdateDialog.qml
+        qml/SettingsDialog.qml
         qml/UpdateAlert.qml
         qml/TrafficLights.qml
         qml/DatabasesPage.qml
         qml/DockerPage.qml
         qml/BusyLabel.qml
         qml/Spinner.qml
+        qml/UiSelectMenu.qml
+        qml/UiCheckBox.qml
+        qml/UiInput.qml
     RESOURCES
         qml.qrc
 )
@@ -167,6 +173,8 @@ qt_add_executable(qmltests
     src/commandexecutor.h
     src/commandexecutor.cpp
     src/logmodel.h
+    src/logparser.h
+    src/logparser.cpp
     src/projectlistmodel.h
     src/projectlistmodel.cpp
     src/treemodel.h
@@ -254,6 +262,8 @@ add_executable(test_mcpserver
     src/test_mcpserver.cpp
     src/mcpserver.h
     src/mcpserver.cpp
+    src/logparser.h
+    src/logparser.cpp
     src/dockerservice.h
     src/dockerservice.cpp
     src/projectservice.h
@@ -269,6 +279,31 @@ add_executable(test_mcpserver
 )
 target_include_directories(test_mcpserver PRIVATE src)
 target_link_libraries(test_mcpserver PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+
+# Log parser tests (two-layer: trun prefix + format probe chain)
+add_executable(test_logparser
+    src/test_logparser.cpp
+    src/logparser.h
+    src/logparser.cpp
+)
+target_include_directories(test_logparser PRIVATE src)
+target_link_libraries(test_logparser PRIVATE
+    Qt6::Core
+    Qt6::Test
+)
+
+# Log model filter tests
+add_executable(test_logmodel
+    src/test_logmodel.cpp
+    src/logmodel.h
+    src/logparser.h
+    src/logparser.cpp
+)
+target_include_directories(test_logmodel PRIVATE src)
+target_link_libraries(test_logmodel PRIVATE
     Qt6::Core
     Qt6::Test
 )

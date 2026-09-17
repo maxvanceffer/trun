@@ -8,6 +8,7 @@
 #include <QDebug>
 #include <QFile>
 #include <QDir>
+#include <QProcess>
 #include "projectservice.h"
 #include "commandexecutor.h"
 #include "logmodel.h"
@@ -32,6 +33,37 @@
 
 int main(int argc, char *argv[])
 {
+    // GUI launches (Finder/open) inherit a minimal PATH without Homebrew or
+    // user bins, so bare `composer`/`php`/`symfony` fail with
+    // "execve: No such file or directory". Merge the login-shell PATH once
+    // so the app and every child process resolve the real toolchain.
+    {
+        QByteArray base = qgetenv("PATH");
+        QStringList seen = QString::fromUtf8(base).split(QLatin1Char(':'), Qt::SkipEmptyParts);
+        auto addMissing = [&](const QString &p) {
+            if (!p.isEmpty() && !seen.contains(p))
+                seen << p;
+        };
+        for (const char *shell : {"/bin/zsh", "/bin/bash"}) {
+            if (!QFile::exists(QString::fromUtf8(shell)))
+                continue;
+            QProcess probe;
+            probe.start(QString::fromUtf8(shell), {"-l", "-c", "printf %s \"$PATH\""});
+            if (!probe.waitForFinished(2000))
+                continue;
+            const QString out =
+                QString::fromUtf8(probe.readAllStandardOutput()).trimmed();
+            if (out.isEmpty())
+                continue;
+            for (const QString &p : out.split(QLatin1Char(':'), Qt::SkipEmptyParts))
+                addMissing(p);
+            break;
+        }
+        addMissing(QStringLiteral("/opt/homebrew/bin"));
+        addMissing(QStringLiteral("/opt/homebrew/sbin"));
+        addMissing(QStringLiteral("/usr/local/bin"));
+        qputenv("PATH", seen.join(QLatin1Char(':')).toUtf8());
+    }
     // Required for window transparency / blur effects
     QQuickWindow::setDefaultAlphaBuffer(true);
     // Headless MCP server: no GUI, no tray, no QML engine.

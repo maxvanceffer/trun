@@ -19,14 +19,14 @@ Item {
     readonly property string _type: model.item_type ?? ""
     readonly property string _folderName: model.folderName ?? ""
     readonly property string _folderPath: model.folderPath ?? ""
-    readonly property string _name: model.name ?? ""
-    readonly property string _projectPath: model.project_id ?? ""
-    readonly property string _manifest: model.manifest ?? ""
-    readonly property string _description: model.description ?? ""
-    readonly property var _commands: model.commands ?? []
+    readonly property bool _hasManifests: model.hasManifests ?? false
 
     property bool isFolder: _type === "folder"
-    property bool isProject: _type === "project"
+    property bool isEntry: _type === "manifests"
+    // Entries and leaf folders with manifests open the folder page;
+    // hybrid and plain folders expand/collapse instead.
+    property bool navigates: delegateRoot.isEntry
+        || (delegateRoot.isFolder && delegateRoot._hasManifests && !delegateRoot.hasChildren)
 
     // The single root node starts expanded so projects are visible.
     Component.onCompleted: {
@@ -34,28 +34,16 @@ Item {
             treeView.expand(row)
     }
 
-    signal projectClicked(string projectId)
-    signal addCustomRequested(string folderPath)
+    signal folderClicked(string folderPath)
 
-    // Icon source based on manifest type (for projects) or folder (default).
+    // Sidebar iconography: folder rows (roots included) use the stack,
+    // manifest rows the file-terminal marker. No yellow anywhere.
     // iconBaseUrl is an absolute URL set from C++ (file:// in dev, bundle path in prod).
     property string iconSource: {
-        if (_type === "project") {
-            switch (_manifest) {
-                case "package.json":    return iconBaseUrl + "npm-32px.png"
-                case "Cargo.toml":      return iconBaseUrl + (Theme.isDark ? "rust-dark-32px.png" : "rust-light-32px.png")
-                case "go.mod":          return iconBaseUrl + (Theme.isDark ? "go-dark-32px.png" : "go-light-32px.png")
-                case "pyproject.toml":  return iconBaseUrl + "python-32px.png"
-                case "pom.xml":         return iconBaseUrl + "java-32px.png"
-                case "build.gradle":    return iconBaseUrl + "gradle-32px.png"
-                case "CMakeLists.txt":  return iconBaseUrl + "cmake-32px.png"
-                case "composer.json":   return iconBaseUrl + (Theme.isDark ? "php-dark-32px.png" : "php-32px.png")
-                case "Gemfile":         return iconBaseUrl + "ruby-32px.png"
-                case "mix.exs":         return iconBaseUrl + "elixir-32px.png"
-                default:                return iconBaseUrl + "default-32px.png"
-            }
-        }
-        return iconBaseUrl + "folder-32px.png"
+        if (delegateRoot.depth !== 0
+            && (delegateRoot.isEntry || delegateRoot._hasManifests))
+            return iconBaseUrl + (Theme.isDark ? "file-terminal-dark.png" : "file-terminal.png")
+        return iconBaseUrl + (Theme.isDark ? "folders-dark.png" : "folders.png")
     }
 
     Rectangle {
@@ -66,8 +54,14 @@ Item {
         anchors.leftMargin: -Theme.spacingXs
         anchors.right: parent.right
         color: {
-            if (mouseArea.pressed) return Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35)
-            if (delegateRoot.isProject && treeView.selectedProjectId === delegateRoot._projectPath) return Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.25)
+            // Highlight belongs to rows that open a page (entries and
+            // leaf folders with manifests). Plain container folders never
+            // highlight yellow, pressed or selected.
+            if (delegateRoot.navigates && mouseArea.pressed)
+                return Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35)
+            if (delegateRoot.navigates && delegateRoot._folderPath !== ""
+                && treeView.selectedFolderPath === delegateRoot._folderPath)
+                return Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.25)
             return "transparent"
         }
         radius: Theme.radiusSm
@@ -79,14 +73,14 @@ Item {
         hoverEnabled: true
         acceptedButtons: Qt.LeftButton
         onClicked: {
-            if (delegateRoot.isFolder) {
-                treeView.toggleExpanded(row)
-            } else {
-                logModel.add("info", "sidebar", "Project clicked: " + delegateRoot._projectPath)
+            if (delegateRoot.navigates) {
+                logModel.add("info", "sidebar", "Folder clicked: " + delegateRoot._folderPath)
                 // Direct call: context properties resolve everywhere,
                 // unlike cross-file id lookups
-                projectService.selectProject(delegateRoot._projectPath)
-                delegateRoot.projectClicked(delegateRoot._projectPath)
+                projectService.selectFolder(delegateRoot._folderPath)
+                delegateRoot.folderClicked(delegateRoot._folderPath)
+            } else if (delegateRoot.isFolder) {
+                treeView.toggleExpanded(row)
             }
         }
     }
@@ -130,45 +124,11 @@ Item {
 
         // Name
         Label {
-            text: delegateRoot.isFolder ? _folderName : _name
+            text: _folderName
             color: Theme.textPrimary
             font.pixelSize: Theme.fontSizeMd
             elide: Text.ElideRight
             Layout.fillWidth: true
-        }
-
-        // Command count (only for projects)
-        Label {
-            text: delegateRoot.isProject && _commands
-                ? String(_commands.length)
-                : ""
-            color: Theme.textMuted
-            font.pixelSize: 9
-            Layout.leftMargin: Theme.spacingXs
-            visible: delegateRoot.isProject && _commands && _commands.length > 0
-        }
-
-        // Add custom command (folders only, right-aligned, fades in on hover)
-        Item {
-            Layout.alignment: Qt.AlignVCenter
-            Layout.preferredWidth: Theme.sidebarRowHeight
-            Layout.preferredHeight: Theme.sidebarRowHeight
-            visible: opacity > 0
-            opacity: (delegateRoot.isFolder
-                      && (mouseArea.containsMouse || addButton.hovered)) ? 1 : 0
-
-            Behavior on opacity {
-                NumberAnimation { duration: Theme.animHover; easing.type: Theme.easingStandard }
-            }
-
-            IconButton {
-                id: addButton
-                anchors.fill: parent
-                visible: delegateRoot.isFolder
-                iconSource: iconBaseUrl + (Theme.isDark ? "square-plus-dark.png" : "square-plus.png")
-                tooltipText: qsTr("Add custom command")
-                onClicked: delegateRoot.addCustomRequested(delegateRoot._folderPath)
-            }
         }
     }
 }

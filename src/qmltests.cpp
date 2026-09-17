@@ -40,35 +40,27 @@ void QmlTests::test_add_project_package_json()
     QmlTreeModel model;
     model.setRootPath("/test");
 
-    model.addProject(
-        "/test/npm-project",
-        "NpmProject",
-        "An NPM project",
-        "package.json",
-        QVariant()
-    );
+    model.addProjectManifest("/test/npm-project", "package.json");
 
-    // Visible root node "test", then one folder "npm-project" holding the project
+    // Visible root node "test", then one leaf folder "npm-project".
+    // Leaf folders with manifests navigate directly: no children, no entry.
     QCOMPARE(model.rowCount(), 1);
 
     QModelIndex rootIdx = model.index(0, 0);
     QVERIFY(rootIdx.isValid());
     QCOMPARE(model.data(rootIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
+    QCOMPARE(model.data(rootIdx, QmlTreeModel::HasManifestsRole).toBool(), false);
     QCOMPARE(model.rowCount(rootIdx), 1);
 
     QModelIndex folderIdx = model.index(0, 0, rootIdx);
     QVERIFY(folderIdx.isValid());
     QCOMPARE(model.data(folderIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
-    QCOMPARE(model.rowCount(folderIdx), 1);
-
-    QModelIndex idx = model.index(0, 0, folderIdx);
-    QVERIFY(idx.isValid());
-
-    QCOMPARE(model.data(idx, QmlTreeModel::ManifestRole).toString(), QString("package.json"));
-    QCOMPARE(model.data(idx, QmlTreeModel::NameRole).toString(), QString("NpmProject"));
-    QCOMPARE(model.data(idx, QmlTreeModel::ItemTypeRole).toString(), QString("project"));
-    QCOMPARE(model.data(idx, QmlTreeModel::ProjectIdRole).toString(),
-             QString("/test/npm-project/package.json"));
+    QCOMPARE(model.data(folderIdx, QmlTreeModel::FolderPathRole).toString(),
+             QString("/test/npm-project"));
+    QCOMPARE(model.data(folderIdx, QmlTreeModel::HasManifestsRole).toBool(), true);
+    QCOMPARE(model.data(folderIdx, QmlTreeModel::ManifestRole).toString(),
+             QString("package.json"));
+    QCOMPARE(model.rowCount(folderIdx), 0);
 }
 
 void QmlTests::test_add_project_cargo_toml()
@@ -76,13 +68,7 @@ void QmlTests::test_add_project_cargo_toml()
     QmlTreeModel model;
     model.setRootPath("/test");
 
-    model.addProject(
-        "/test/rust-project",
-        "RustProject",
-        "A Rust project",
-        "Cargo.toml",
-        QVariant()
-    );
+    model.addProjectManifest("/test/rust-project", "Cargo.toml");
 
     QCOMPARE(model.rowCount(), 1);
 
@@ -92,11 +78,9 @@ void QmlTests::test_add_project_cargo_toml()
 
     QModelIndex folderIdx = model.index(0, 0, rootIdx);
     QVERIFY(folderIdx.isValid());
-    QCOMPARE(model.rowCount(folderIdx), 1);
-
-    QModelIndex idx = model.index(0, 0, folderIdx);
-    QCOMPARE(model.data(idx, QmlTreeModel::ManifestRole).toString(), QString("Cargo.toml"));
-    QCOMPARE(model.data(idx, QmlTreeModel::NameRole).toString(), QString("RustProject"));
+    QCOMPARE(model.data(folderIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
+    QCOMPARE(model.data(folderIdx, QmlTreeModel::HasManifestsRole).toBool(), true);
+    QCOMPARE(model.rowCount(folderIdx), 0);
 }
 
 void QmlTests::test_add_folder_implicit()
@@ -104,14 +88,8 @@ void QmlTests::test_add_folder_implicit()
     QmlTreeModel model;
     model.setRootPath("/test");
 
-    // Folders are created implicitly when adding a project to a nested path
-    model.addProject(
-        "/test/myfolder/subproject",
-        "SubProject",
-        "A sub project in folder",
-        "package.json",
-        QVariant()
-    );
+    // Folders are created implicitly when adding a manifest to a nested path
+    model.addProjectManifest("/test/myfolder/subproject", "package.json");
 
     // Visible root, then 1 folder ("myfolder")
     QCOMPARE(model.rowCount(), 1);
@@ -123,17 +101,14 @@ void QmlTests::test_add_folder_implicit()
     QModelIndex myfolderIdx = model.index(0, 0, rootIdx);
     QVERIFY(myfolderIdx.isValid());
     QCOMPARE(model.data(myfolderIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
+    QCOMPARE(model.data(myfolderIdx, QmlTreeModel::HasManifestsRole).toBool(), false);
     QCOMPARE(model.rowCount(myfolderIdx), 1);
 
     QModelIndex subIdx = model.index(0, 0, myfolderIdx);
     QVERIFY(subIdx.isValid());
     QCOMPARE(model.data(subIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
-    QCOMPARE(model.rowCount(subIdx), 1);
-
-    QModelIndex projIdx = model.index(0, 0, subIdx);
-    QVERIFY(projIdx.isValid());
-    QCOMPARE(model.data(projIdx, QmlTreeModel::ItemTypeRole).toString(), QString("project"));
-    QCOMPARE(model.data(projIdx, QmlTreeModel::NameRole).toString(), QString("SubProject"));
+    QCOMPARE(model.data(subIdx, QmlTreeModel::HasManifestsRole).toBool(), true);
+    QCOMPARE(model.rowCount(subIdx), 0);
 }
 
 void QmlTests::test_folder_with_child_project()
@@ -141,21 +116,9 @@ void QmlTests::test_folder_with_child_project()
     QmlTreeModel model;
     model.setRootPath("/test");
 
-    // Two manifests in the same folder group under one folder node
-    model.addProject(
-        "/test/backend",
-        "acme-js",
-        "JS part",
-        "package.json",
-        QVariant()
-    );
-    model.addProject(
-        "/test/backend",
-        "acme-php",
-        "PHP part",
-        "composer.json",
-        QVariant()
-    );
+    // Two manifests in the same folder: still a leaf, no entry child
+    model.addProjectManifest("/test/backend", "package.json");
+    model.addProjectManifest("/test/backend", "composer.json");
 
     QCOMPARE(model.rowCount(), 1); // visible root
 
@@ -166,13 +129,108 @@ void QmlTests::test_folder_with_child_project()
     QModelIndex folderIdx = model.index(0, 0, rootIdx);
     QVERIFY(folderIdx.isValid());
     QCOMPARE(model.data(folderIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
-    QCOMPARE(model.rowCount(folderIdx), 2);
+    QCOMPARE(model.data(folderIdx, QmlTreeModel::HasManifestsRole).toBool(), true);
+    QCOMPARE(model.rowCount(folderIdx), 0);
+}
 
-    QModelIndex first = model.index(0, 0, folderIdx);
-    QModelIndex second = model.index(1, 0, folderIdx);
-    QVERIFY(first.isValid() && second.isValid());
-    QCOMPARE(model.data(first, QmlTreeModel::ManifestRole).toString(), QString("package.json"));
-    QCOMPARE(model.data(second, QmlTreeModel::ManifestRole).toString(), QString("composer.json"));
+void QmlTests::test_hybrid_folder_gets_manifests_entry()
+{
+    QmlTreeModel model;
+    model.setRootPath("/test");
+
+    // A folder with both a manifest and a subfolder grows one entry at row 0
+    model.addProjectManifest("/test/mixed", "package.json");
+    model.addProjectManifest("/test/mixed/sub", "go.mod");
+
+    QModelIndex rootIdx = model.index(0, 0);
+    QVERIFY(rootIdx.isValid());
+
+    QModelIndex mixedIdx = model.index(0, 0, rootIdx);
+    QVERIFY(mixedIdx.isValid());
+    QCOMPARE(model.data(mixedIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
+    QCOMPARE(model.rowCount(mixedIdx), 2);
+
+    QModelIndex entryIdx = model.index(0, 0, mixedIdx);
+    QVERIFY(entryIdx.isValid());
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::ItemTypeRole).toString(), QString("manifests"));
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::FolderNameRole).toString(), QString("mixed"));
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::FolderPathRole).toString(), QString("/test/mixed"));
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::ManifestRole).toString(), QString("package.json"));
+    QCOMPARE(model.rowCount(entryIdx), 0);
+
+    QModelIndex subIdx = model.index(1, 0, mixedIdx);
+    QVERIFY(subIdx.isValid());
+    QCOMPARE(model.data(subIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
+}
+
+void QmlTests::test_top_level_root_gets_manifests_entry()
+{
+    QmlTreeModel model;
+    model.setRootPath("/test");
+
+    // Manifests directly in the root: the root stays a container row
+    // and exposes them through an entry, like a hybrid folder
+    model.addProjectManifest("/test", "package.json");
+
+    QCOMPARE(model.rowCount(), 1);
+
+    QModelIndex rootIdx = model.index(0, 0);
+    QVERIFY(rootIdx.isValid());
+    QCOMPARE(model.data(rootIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
+    QCOMPARE(model.data(rootIdx, QmlTreeModel::HasManifestsRole).toBool(), true);
+    QCOMPARE(model.rowCount(rootIdx), 1);
+
+    QModelIndex entryIdx = model.index(0, 0, rootIdx);
+    QVERIFY(entryIdx.isValid());
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::ItemTypeRole).toString(), QString("manifests"));
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::FolderPathRole).toString(), QString("/test"));
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::ManifestRole).toString(), QString("package.json"));
+}
+
+void QmlTests::test_manifests_entry_stack_on_second_manifest()
+{
+    QmlTreeModel model;
+    model.setRootPath("/test");
+
+    model.addProjectManifest("/test/mixed", "package.json");
+    model.addProjectManifest("/test/mixed/sub", "go.mod");
+    // Second manifest in the hybrid folder: entry icon becomes the stack
+    model.addProjectManifest("/test/mixed", "composer.json");
+    // Duplicate registration is a no-op
+    model.addProjectManifest("/test/mixed", "package.json");
+
+    QModelIndex mixedIdx = model.index(0, 0, model.index(0, 0));
+    QVERIFY(mixedIdx.isValid());
+    QCOMPARE(model.rowCount(mixedIdx), 2);
+
+    QModelIndex entryIdx = model.index(0, 0, mixedIdx);
+    QVERIFY(entryIdx.isValid());
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::ItemTypeRole).toString(), QString("manifests"));
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::ManifestRole).toString(), QString());
+}
+
+void QmlTests::test_manifests_entry_when_subfolder_comes_first()
+{
+    QmlTreeModel model;
+    model.setRootPath("/test");
+
+    // Subfolder first, the folder's own manifest later: same hybrid shape
+    model.addProjectManifest("/test/mixed/sub", "go.mod");
+    model.addProjectManifest("/test/mixed", "package.json");
+
+    QModelIndex mixedIdx = model.index(0, 0, model.index(0, 0));
+    QVERIFY(mixedIdx.isValid());
+    QCOMPARE(model.rowCount(mixedIdx), 2);
+
+    QModelIndex entryIdx = model.index(0, 0, mixedIdx);
+    QVERIFY(entryIdx.isValid());
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::ItemTypeRole).toString(), QString("manifests"));
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::FolderPathRole).toString(), QString("/test/mixed"));
+    QCOMPARE(model.data(entryIdx, QmlTreeModel::ManifestRole).toString(), QString("package.json"));
+
+    QModelIndex subIdx = model.index(1, 0, mixedIdx);
+    QVERIFY(subIdx.isValid());
+    QCOMPARE(model.data(subIdx, QmlTreeModel::ItemTypeRole).toString(), QString("folder"));
 }
 
 void QmlTests::test_qml_sidebar_component_loads()
@@ -668,11 +726,29 @@ void QmlTests::test_icons_in_assets()
     // Check that python-32px.png exists (referenced by pyproject.toml projects)
     QVERIFY(QFile::exists(iconDir + "/python-32px.png"));
 
+    // Check that composer-32px.png exists (referenced by composer.json projects)
+    QVERIFY(QFile::exists(iconDir + "/composer-32px.png"));
+
     // Check that default-32px.png exists
     QVERIFY(QFile::exists(iconDir + "/default-32px.png"));
 
-    // Check that folder-32px.png exists
-    QVERIFY(QFile::exists(iconDir + "/folder-32px.png"));
+    // Check that the folders stack exists (folder rows incl. roots, Browse button)
+    QVERIFY(QFile::exists(iconDir + "/folders.png"));
+    QVERIFY(QFile::exists(iconDir + "/folders-dark.png"));
+
+    // Check that the folders stack exists (plain folder rows, Browse button)
+    QVERIFY(QFile::exists(iconDir + "/folders.png"));
+    QVERIFY(QFile::exists(iconDir + "/folders-dark.png"));
+
+    // Check bash.png (custom-commands section header)
+    QVERIFY(QFile::exists(iconDir + "/bash.png"));
+
+    // Sidebar iconography: file-terminal marker for manifest rows,
+    // stack for plain folders, each with a light variant for dark theme
+    QVERIFY(QFile::exists(iconDir + "/file-terminal.png"));
+    QVERIFY(QFile::exists(iconDir + "/file-terminal-dark.png"));
+    QVERIFY(QFile::exists(iconDir + "/folders.png"));
+    QVERIFY(QFile::exists(iconDir + "/folders-dark.png"));
 
     // Check UI glyphs used by icon-only ghost buttons
     QVERIFY(QFile::exists(iconDir + "/square-chevron-down.png"));
@@ -823,9 +899,10 @@ void QmlTests::test_dashboard_layout_geometry()
     QCOMPARE(header->height(), 48.0);
     QCOMPARE(activity->y(), stats->y() + stats->height() + 24.0);
 
-    // Navigation: selecting a project switches to the project page
-    QVERIFY(QMetaObject::invokeMethod(obj, "openProject"));
-    QCOMPARE(obj->property("activePage").toString(), QString("project"));
+    // Navigation: selecting a folder switches to the folder page
+    QVERIFY(QMetaObject::invokeMethod(obj, "openFolder",
+        Q_ARG(QVariant, QVariant(tmp.path() + "/app"))));
+    QCOMPARE(obj->property("activePage").toString(), QString("folder"));
     QVERIFY(QMetaObject::invokeMethod(obj, "goHome"));
     QCOMPARE(obj->property("activePage").toString(), QString("dashboard"));
 

@@ -5,8 +5,16 @@ Desktop Qt/QML launcher that scans a folder for dev projects and runs their comm
 ## Language
 
 **Project**:
-A folder containing a recognized manifest file (package.json, Cargo.toml, go.mod, and more).
+A folder containing a recognized manifest file (package.json, Cargo.toml, go.mod, and more). One folder may hold several projects, one per manifest.
 _Avoid_: repo, directory, workspace root
+
+**Folder page**:
+The main-window page of one folder, grouping all its manifest projects as sections with their command cards, plus a custom-commands section.
+_Avoid_: project screen, folder view
+
+**Manifests entry**:
+The sidebar child row of a folder that has both manifests and subfolders; opens the folder page. Labeled with the folder display name.
+_Avoid_: manifest link, package row
 
 **Manifest**:
 The file that marks a folder as a project and declares its commands (e.g. `scripts` in package.json).
@@ -33,7 +41,7 @@ The full view of one command (breadcrumb, stat widgets, Run/Stop, its console), 
 _Avoid_: command screen, modal
 
 **Breadcrumb**:
-The detail page header showing `project › command`; the project part navigates back to the grid.
+The page header showing the navigation path: `Dashboard › folders…` on a folder page, plus `› manifest › command` on a detail page. Segments navigate back.
 _Avoid_: title bar, back button
 
 **Run configuration**:

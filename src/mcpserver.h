@@ -6,8 +6,12 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QMap>
+#include <QSet>
 #include <QList>
 #include <QTextStream>
+#include <QDateTime>
+
+#include "logparser.h"
 
 class ProjectService;
 class CommandExecutor;
@@ -54,9 +58,6 @@ private:
     void appendLog(const QString &commandId, const QString &level,
                    const QString &target, const QString &message);
 
-    static QJsonObject monologMatch(const QString &line, const QString &date,
-                                    const QString &level, const QString &query);
-
     void onStdinActivated();
 
     ProjectService *m_projects;
@@ -66,4 +67,11 @@ private:
     QMap<QString, QList<LogLine>> m_logs;
     QMap<QString, int> m_runtimePorts; // run key -> port sniffed from output URLs
     static constexpr int kMaxLogLines = 2000;
+
+    // Структурный поиск поверх LogParser (общий с UI движок AND-фильтров).
+    static QString resultHeader(int matched, int total, const QStringList &levels,
+                                const QStringList &channels, bool truncated);
+    static QDateTime parsedTimestamp(const ParsedLogLine &p);
+    static void observe(const ParsedLogLine &p, QSet<QString> &levels, QSet<QString> &channels);
+    static QStringList sorted(const QSet<QString> &s);
 };
