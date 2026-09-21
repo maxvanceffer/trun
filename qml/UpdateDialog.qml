@@ -256,7 +256,7 @@ Dialog {
                 }
                 contentItem: Label {
                     text: parent.text
-                    color: "white"
+                    color: Theme.accentForeground
                     font.pixelSize: 12
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
@@ -277,7 +277,7 @@ Dialog {
                 }
                 contentItem: Label {
                     text: parent.text
-                    color: "white"
+                    color: Theme.accentForeground
                     font.pixelSize: 12
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
@@ -298,7 +298,7 @@ Dialog {
                 }
                 contentItem: Label {
                     text: parent.text
-                    color: "white"
+                    color: Theme.accentForeground
                     font.pixelSize: 12
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter

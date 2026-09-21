@@ -20,6 +20,7 @@ Item {
     readonly property string _folderName: model.folderName ?? ""
     readonly property string _folderPath: model.folderPath ?? ""
     readonly property bool _hasManifests: model.hasManifests ?? false
+    readonly property string _gitBranch: model.gitBranch ?? ""
 
     property bool isFolder: _type === "folder"
     property bool isEntry: _type === "manifests"
@@ -97,6 +98,7 @@ Item {
         // Expand/collapse indicator for folders (zero size for leaves):
         // chevron-right when collapsed, chevron-down when expanded.
         Image {
+            id: chevron
             Layout.preferredWidth: (delegateRoot.isFolder && delegateRoot.hasChildren) ? Theme.iconXs : 0
             Layout.preferredHeight: (delegateRoot.isFolder && delegateRoot.hasChildren) ? Theme.iconXs : 0
             Layout.alignment: Qt.AlignVCenter
@@ -112,6 +114,7 @@ Item {
 
         // Icon (32px source, aspect-fitted into a 16px box)
         Image {
+            id: iconImage
             Layout.preferredWidth: Theme.iconSm
             Layout.preferredHeight: Theme.iconSm
             Layout.leftMargin: Theme.spacingXs
@@ -124,11 +127,27 @@ Item {
 
         // Name
         Label {
+            id: nameLabel
             text: _folderName
             color: Theme.textPrimary
             font.pixelSize: Theme.fontSizeMd
             elide: Text.ElideRight
             Layout.fillWidth: true
+        }
+
+        UiTag {
+            id: branchTag
+            readonly property bool branchVisible: Settings.showGitBranch && _gitBranch !== ""
+                && (!Settings.gitBranchTopOnly || depth === 0)
+            visible: branchVisible
+            label: _gitBranch
+            color: "primary"
+            variant: "subtle"
+            size: "sm"
+            iconSource: iconBaseUrl + "git-branch.png"
+            Layout.fillWidth: false
+            Layout.alignment: Qt.AlignVCenter
+            Layout.maximumWidth: 112
         }
     }
 }

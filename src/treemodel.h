@@ -3,6 +3,7 @@
 #include <QAbstractItemModel>
 #include <QList>
 #include <QSet>
+#include <QTimer>
 
 // ============================================================
 // QmlTreeItem — node in the sidebar tree (folder or manifests entry)
@@ -43,6 +44,7 @@ private:
     Type m_type;
     QString m_name;
     QString m_path;
+    QString m_gitBranch;
     QSet<QString> m_manifests; // folders only
     QString m_manifest; // entries only
     QmlTreeItem* m_parent;
@@ -62,6 +64,10 @@ private:
 // ============================================================
 class QmlTreeModel : public QAbstractItemModel {
     Q_OBJECT
+    // Bumped every time any cached branch changes; lets QML bindings
+    // that call gitBranchForPath() refresh (plain function calls have
+    // no change tracking on their own).
+    Q_PROPERTY(int gitBranchesVersion READ gitBranchesVersion NOTIFY gitBranchesChanged)
 
 public:
     enum Roles {
@@ -70,6 +76,7 @@ public:
         FolderPathRole,
         HasManifestsRole,
         ManifestRole,
+        GitBranchRole,
     };
     Q_ENUM(Roles)
 
@@ -87,6 +94,10 @@ public:
     // Folder label: git repo name when the folder is a repo, else its name.
     static QString folderDisplayName(const QString &absoluteFolderPath);
 
+    // Cached branch for an absolute folder path, "" when unknown.
+    Q_INVOKABLE QString gitBranchForPath(const QString &path) const;
+    int gitBranchesVersion() const { return m_gitBranchesVersion; }
+
     // QAbstractItemModel
     QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const override;
     QModelIndex parent(const QModelIndex &index) const override;
@@ -95,7 +106,12 @@ public:
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     QHash<int, QByteArray> roleNames() const override;
 
+signals:
+    void gitBranchesChanged();
+
 private:
+    void refreshGitBranches();
+    QTimer m_gitRefreshTimer;
     QModelIndex indexForItem(QmlTreeItem *item) const;
     QmlTreeItem* getItem(const QModelIndex &index) const;
     QmlTreeItem* rootItem;
@@ -104,6 +120,7 @@ private:
 
     // Visible top-level nodes, one per workspace root.
     QList<QmlTreeItem*> m_rootFolders;
+    int m_gitBranchesVersion = 0;
 
     QmlTreeItem* ensureFolder(const QString &absoluteFolderPath);
 

@@ -33,10 +33,23 @@ QtObject {
     readonly property color mutedSurface: isDark ? "#2b2b22" : "#f4f4f0"
     // destructive: light #e7000b / dark #ff6467
     readonly property color destructive: isDark ? "#ff6467" : "#e7000b"
+    // Text on destructive fills (solid buttons): white in both themes,
+    // matching the Nuxt error-solid convention.
+    readonly property color destructiveForeground: "#ffffff"
     // hairlines: light #e8e8e3 / dark white 10% (#242422)
     readonly property color border: isDark ? "#242422" : "#e8e8e3"
     // ring
     readonly property color ring: isDark ? "#abab9c" : "#7c7c67"
+
+    readonly property color success: isDark ? "#4ade80" : "#22c55e"
+    readonly property color info: isDark ? "#60a5fa" : "#3b82f6"
+    readonly property color warning: isDark ? "#fbbf24" : "#f59e0b"
+    readonly property color error: isDark ? "#f87171" : "#ef4444"
+    readonly property color textInverted: windowBackground
+    readonly property color backgroundDefault: windowBackground
+    readonly property color backgroundInverted: textPrimary
+    readonly property color backgroundElevated: mutedSurface
+    readonly property color borderAccented: border
 
     // ─── Layout scale ──────────────────────────────────────────────────
     // Single source of truth for spacing/sizing so paddings stay uniform.

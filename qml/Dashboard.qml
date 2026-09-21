@@ -791,23 +791,24 @@ Rectangle {
             }
         }
 
-        // Update alert capsule between stats and activity. Collapses to
-        // zero height when no update is available (layout unchanged).
+        // Update alert between stats and activity: full width, same side
+        // margins as the cards and equal spacing above and below.
+        // Collapses to zero height when no update is available.
         Item {
             id: updateAlertSlot
             objectName: "updateAlertSlot"
             anchors.top: systemStatsRow.bottom
+            anchors.topMargin: Theme.spacingMd
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.leftMargin: Theme.spacingLg
             anchors.rightMargin: Theme.spacingLg
-            height: dashboard.hasUpdate ? 44 + Theme.spacingMd : 0
+            height: dashboard.hasUpdate ? 44 : 0
             visible: dashboard.hasUpdate
             clip: true
 
             UpdateAlert {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
+                anchors.fill: parent
                 messageText: qsTr("Update to v%1 available").arg(dashboard.updateVersion)
                 actionText: qsTr("Update")
                 iconSource: iconBaseUrl + (Theme.isDark ? "rotate-cw-dark.png" : "rotate-cw.png")
@@ -820,7 +821,7 @@ Rectangle {
             id: activityView
             objectName: "activityView"
             anchors.top: updateAlertSlot.bottom
-            anchors.topMargin: Theme.spacingXl
+            anchors.topMargin: Theme.spacingMd
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
@@ -1167,6 +1168,13 @@ Rectangle {
 
                 readonly property string folderPath: (projectService.activeFolder
                     && projectService.activeFolder.path) || ""
+                // Current branch of the folder; tracks the model's
+                // refresh counter since plain calls have no tracking.
+                readonly property string folderBranch: {
+                    treeModel.gitBranchesVersion
+                    return folderPage.folderPath !== ""
+                        ? treeModel.gitBranchForPath(folderPage.folderPath) : ""
+                }
                 // Manifest projects, excluding the custom-commands pseudo-project
                 readonly property var manifestSections: {
                     var out = []
@@ -1201,6 +1209,14 @@ Rectangle {
                     ColumnLayout {
                         width: folderScroll.availableWidth
                         spacing: Theme.spacingXl
+
+                        // Current git branch of the folder, when known.
+                        StatCard {
+                            visible: Settings.showGitBranch && folderPage.folderBranch !== ""
+                            title: qsTr("Git branch")
+                            value: folderPage.folderBranch
+                            sub: qsTr("Current branch")
+                        }
 
                         Repeater {
                             model: folderPage.manifestSections

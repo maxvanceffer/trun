@@ -10,8 +10,6 @@ Dialog {
     id: settingsDialog
 
     function openDialog() {
-        var saved = Settings.get("onExitRunningCommands", "").toString()
-        exitBehavior.currentIndex = saved === "kill" ? 1 : saved === "leave" ? 2 : 0
         open()
     }
 
@@ -63,6 +61,114 @@ Dialog {
             color: Theme.border
         }
 
+        // Row: show git branch in the sidebar
+        RowLayout {
+            spacing: Theme.spacingLg
+            Layout.fillWidth: true
+            Layout.leftMargin: 20
+            Layout.rightMargin: 20
+            Layout.topMargin: Theme.spacingLg
+            Layout.bottomMargin: Theme.spacingLg
+
+            ColumnLayout {
+                spacing: 2
+                Layout.fillWidth: true
+
+                Label {
+                    text: qsTr("Git branch")
+                    color: Theme.textPrimary
+                    font.pixelSize: Theme.fontSizeMd
+                    font.weight: Font.Medium
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: qsTr("Show the branch name next to repository folders in the sidebar.")
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSizeSm
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+            }
+
+            UiSelectMenu {
+                id: gitBranchMenu
+                Layout.preferredWidth: 160
+                Layout.alignment: Qt.AlignVCenter
+                searchable: false
+                model: [
+                    { key: "show", label: qsTr("Show") },
+                    { key: "hide", label: qsTr("Hide") }
+                ]
+                currentIndex: Settings.showGitBranch ? 0 : 1
+                onActivated: function(index) {
+                    Settings.setShowGitBranch(index === 0)
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.leftMargin: 20
+            Layout.rightMargin: 20
+            Layout.preferredHeight: 1
+            color: Theme.border
+        }
+
+        // Row: where branch tags appear in the sidebar
+        RowLayout {
+            spacing: Theme.spacingLg
+            Layout.fillWidth: true
+            Layout.leftMargin: 20
+            Layout.rightMargin: 20
+            Layout.topMargin: Theme.spacingLg
+            Layout.bottomMargin: Theme.spacingLg
+
+            ColumnLayout {
+                spacing: 2
+                Layout.fillWidth: true
+
+                Label {
+                    text: qsTr("Git branch scope")
+                    color: Theme.textPrimary
+                    font.pixelSize: Theme.fontSizeMd
+                    font.weight: Font.Medium
+                    Layout.fillWidth: true
+                }
+
+                Label {
+                    text: qsTr("Show branch tags only on top-level folders or on every repository folder.")
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSizeSm
+                    wrapMode: Text.WordWrap
+                    Layout.fillWidth: true
+                }
+            }
+
+            UiSelectMenu {
+                id: gitBranchScopeMenu
+                Layout.preferredWidth: 160
+                Layout.alignment: Qt.AlignVCenter
+                searchable: false
+                model: [
+                    { key: "top", label: qsTr("Top folders only") },
+                    { key: "all", label: qsTr("All folders") }
+                ]
+                currentIndex: Settings.gitBranchTopOnly ? 0 : 1
+                onActivated: function(index) {
+                    Settings.setGitBranchTopOnly(index === 0)
+                }
+            }
+        }
+
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.leftMargin: 20
+            Layout.rightMargin: 20
+            Layout.preferredHeight: 1
+            color: Theme.border
+        }
+
         // Row: on-exit behavior for running commands
         RowLayout {
             spacing: Theme.spacingLg
@@ -103,6 +209,10 @@ Dialog {
                     { key: "kill", label: qsTr("Kill commands") },
                     { key: "leave", label: qsTr("Leave running") }
                 ]
+                currentIndex: {
+                    var saved = Settings.get("onExitRunningCommands", "").toString()
+                    return saved === "kill" ? 1 : saved === "leave" ? 2 : 0
+                }
                 onActivated: function(index) {
                     var key = exitBehavior.model[index].key
                     if (key === "")

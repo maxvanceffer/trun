@@ -12,13 +12,6 @@ Button {
     // Suppress the tooltip while e.g. a context menu is open
     property bool suppressTooltip: false
 
-    onSuppressTooltipChanged: {
-        if (suppressTooltip) {
-            tooltip.visible = false
-            tooltipDelay.stop()
-        }
-    }
-
     implicitWidth: Theme.sidebarRowHeight
     implicitHeight: Theme.sidebarRowHeight
     padding: 6
@@ -54,51 +47,9 @@ Button {
         smooth: true
     }
 
-    // Custom tooltip (native attached ToolTip cannot be themed):
-    // themed card in the overlay layer, flips below when cramped above.
-    property bool tooltipBelow: false
-
-    Timer {
-        id: tooltipDelay
-        interval: 500
-        onTriggered: {
-            if (iconButton.suppressTooltip) return
-            // Flip below when there is no room above (window coordinates)
-            var p = iconButton.mapToItem(null, 0, 0)
-            iconButton.tooltipBelow = p.y < 60
-            tooltip.visible = true
-        }
-    }
-
-    onHoveredChanged: {
-        tooltip.visible = false
-        if (hovered && iconButton.tooltipText !== "" && !suppressTooltip)
-            tooltipDelay.restart()
-        else
-            tooltipDelay.stop()
-    }
-
-    ToolTip {
-        id: tooltip
+    UiTooltip {
         text: iconButton.tooltipText
-        visible: false
-        y: iconButton.tooltipBelow ? iconButton.height + 6 : -height - 6
-        x: (iconButton.width - width) / 2
-
-        background: Rectangle {
-            color: Theme.cardBackground
-            border.color: Theme.border
-            radius: Theme.radiusSm
-        }
-
-        contentItem: Label {
-            text: tooltip.text
-            color: Theme.textPrimary
-            font.pixelSize: Theme.fontSizeSm
-            leftPadding: Theme.spacingSm
-            rightPadding: Theme.spacingSm
-            topPadding: Theme.spacingXs
-            bottomPadding: Theme.spacingXs
-        }
+        visible: iconButton.hovered && iconButton.enabled && iconButton.visible
+            && text !== "" && !iconButton.suppressTooltip
     }
 }

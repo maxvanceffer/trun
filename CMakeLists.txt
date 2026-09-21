@@ -87,6 +87,10 @@ qt_add_qml_module(trun-app
         qml/UiSelectMenu.qml
         qml/UiCheckBox.qml
         qml/UiInput.qml
+        qml/UiTag.qml
+        qml/UiAlert.qml
+        qml/UiTooltip.qml
+        qml/UiIcon.qml
     RESOURCES
         qml.qrc
 )

@@ -443,7 +443,7 @@ Item {
 
             contentItem: Label {
                 text: parent.text
-                color: detailRoot.isRunning ? "white" : Theme.primaryForeground
+                color: detailRoot.isRunning ? Theme.destructiveForeground : Theme.primaryForeground
                 font.pixelSize: 13
                 font.bold: true
                 horizontalAlignment: Text.AlignHCenter
@@ -576,7 +576,7 @@ Item {
 
                     contentItem: Label {
                         text: qsTr("Kill & Run")
-                        color: "white"
+                        color: Theme.destructiveForeground
                         font.pixelSize: 12
                         font.bold: true
                         horizontalAlignment: Text.AlignHCenter

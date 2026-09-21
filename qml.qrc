@@ -29,6 +29,10 @@
         <file>qml/UiSelectMenu.qml</file>
         <file>qml/UiCheckBox.qml</file>
         <file>qml/UiInput.qml</file>
+        <file>qml/UiTag.qml</file>
+        <file>qml/UiAlert.qml</file>
+        <file>qml/UiTooltip.qml</file>
+        <file>qml/UiIcon.qml</file>
         <file>assets/wizard/wizard-bg.png</file>
         <file>assets/wizard/wizard-bg@2x.png</file>
     </qresource>
@@ -95,5 +99,6 @@
         <file>assets/icons/database-dark.png</file>
         <file>assets/icons/docker.png</file>
         <file>assets/icons/docker-dark.png</file>
+        <file>assets/icons/git-branch.png</file>
     </qresource>
 </RCC>

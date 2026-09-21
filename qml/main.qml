@@ -273,12 +273,12 @@ Window {
 
                     background: Rectangle {
                         radius: 6
-                        color: "#dc2626"
+                        color: Theme.destructive
                     }
 
                     contentItem: Label {
                         text: "Kill processes"
-                        color: "white"
+                        color: Theme.destructiveForeground
                         font.pixelSize: 12
                         font.bold: true
                         horizontalAlignment: Text.AlignHCenter

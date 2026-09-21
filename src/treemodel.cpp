@@ -4,8 +4,44 @@
 #include <QFileInfo>
 #include <QDir>
 #include <QTextStream>
+#include <QRegularExpression>
 
 namespace {
+
+QString branchForFolder(const QString &path, bool searchParents)
+{
+    QDir folder(path);
+    if (!folder.exists())
+        return {};
+    do {
+        const QString marker = folder.filePath(QStringLiteral(".git"));
+        const QFileInfo info(marker);
+        if (!info.exists())
+            continue;
+        QString gitDir = marker;
+        if (info.isFile()) {
+            QFile file(marker);
+            if (!file.open(QIODevice::ReadOnly))
+                return {};
+            const QByteArray line = file.readLine(8192).trimmed();
+            if (!line.startsWith("gitdir: "))
+                return {};
+            gitDir = folder.absoluteFilePath(QString::fromUtf8(line.mid(8)).trimmed());
+        } else if (!info.isDir()) {
+            return {};
+        }
+        QFile head(QDir(gitDir).filePath(QStringLiteral("HEAD")));
+        if (!head.open(QIODevice::ReadOnly))
+            return {};
+        const QString value = QString::fromUtf8(head.readLine(8192)).trimmed();
+        const QString prefix = QStringLiteral("ref: refs/heads/");
+        if (value.startsWith(prefix))
+            return value.mid(prefix.size());
+        static const QRegularExpression hash(QStringLiteral("^(?:[0-9a-fA-F]{40}|[0-9a-fA-F]{64})$"));
+        return hash.match(value).hasMatch() ? value.left(7) : QString();
+    } while (searchParents && folder.cdUp());
+    return {};
+}
 
 // Repo name from <dir>/.git/config's origin URL, empty when unavailable.
 QString gitRepoName(const QString &dir)
@@ -101,6 +137,45 @@ void QmlTreeItem::appendChild(QmlTreeItem *child)
 QmlTreeModel::QmlTreeModel(QObject *parent)
     : QAbstractItemModel(parent), rootItem(new QmlTreeItem(QmlTreeItem::Folder))
 {
+    m_gitRefreshTimer.setInterval(2000);
+    connect(&m_gitRefreshTimer, &QTimer::timeout, this, &QmlTreeModel::refreshGitBranches);
+}
+
+void QmlTreeModel::refreshGitBranches()
+{
+    bool changed = false;
+    QList<QmlTreeItem *> pending = m_rootFolders;
+    while (!pending.isEmpty()) {
+        QmlTreeItem *item = pending.takeLast();
+        if (item->type() != QmlTreeItem::Folder)
+            continue;
+        pending.append(item->m_children);
+        const QString branch = branchForFolder(item->path(), item->parent() == rootItem);
+        if (branch == item->m_gitBranch)
+            continue;
+        item->m_gitBranch = branch;
+        changed = true;
+        const QModelIndex idx = indexForItem(item);
+        emit dataChanged(idx, idx, {GitBranchRole});
+    }
+    if (changed) {
+        ++m_gitBranchesVersion;
+        emit gitBranchesChanged();
+    }
+}
+
+QString QmlTreeModel::gitBranchForPath(const QString &path) const
+{
+    QList<QmlTreeItem *> pending = m_rootFolders;
+    while (!pending.isEmpty()) {
+        QmlTreeItem *item = pending.takeLast();
+        if (item->type() != QmlTreeItem::Folder)
+            continue;
+        if (item->path() == path)
+            return item->m_gitBranch;
+        pending.append(item->m_children);
+    }
+    return {};
 }
 
 QmlTreeModel::~QmlTreeModel()
@@ -143,10 +218,15 @@ void QmlTreeModel::setRootPaths(const QStringList &rootPaths)
         QmlTreeItem *node = new QmlTreeItem(QmlTreeItem::Folder, rootItem);
         node->m_name = folderDisplayName(root);
         node->m_path = root;
+        node->m_gitBranch = branchForFolder(root, true);
         rootItem->appendChild(node);
         m_rootFolders.append(node);
         endInsertRows();
     }
+    if (m_rootFolders.isEmpty())
+        m_gitRefreshTimer.stop();
+    else
+        m_gitRefreshTimer.start();
 }
 
 QString QmlTreeModel::folderDisplayName(const QString &absoluteFolderPath)
@@ -220,6 +300,7 @@ QmlTreeItem *QmlTreeModel::ensureFolder(const QString &absoluteFolderPath)
             child = new QmlTreeItem(QmlTreeItem::Folder, parent);
             child->m_name = folderDisplayName(wantAbs);
             child->m_path = wantAbs;
+            child->m_gitBranch = branchForFolder(wantAbs, false);
             parent->appendChild(child);
             endInsertRows();
             // A leaf folder with manifests just became hybrid:
@@ -233,6 +314,7 @@ QmlTreeItem *QmlTreeModel::ensureFolder(const QString &absoluteFolderPath)
 
 void QmlTreeModel::clear()
 {
+    m_gitRefreshTimer.stop();
     beginResetModel();
     delete rootItem;
     rootItem = new QmlTreeItem(QmlTreeItem::Folder);
@@ -355,6 +437,9 @@ QVariant QmlTreeModel::data(const QModelIndex &idx, int role) const
         case FolderPathRole:
             return item->path();
 
+        case GitBranchRole:
+            return item->type() == QmlTreeItem::Folder ? item->m_gitBranch : QString();
+
         case HasManifestsRole:
             return item->type() == QmlTreeItem::Folder
                 ? item->hasManifests() : true;
@@ -383,5 +468,6 @@ QHash<int, QByteArray> QmlTreeModel::roleNames() const
     roles[FolderPathRole] = "folderPath";
     roles[HasManifestsRole] = "hasManifests";
     roles[ManifestRole] = "manifest";
+    roles[GitBranchRole] = "gitBranch";
     return roles;
 }
