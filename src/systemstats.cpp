@@ -1,6 +1,8 @@
 #include "systemstats.h"
 
+#include <QSet>
 #include <QSysInfo>
+#include <QThread>
 #include <QTimer>
 
 #ifdef Q_OS_MACOS
@@ -12,6 +14,7 @@
 
 #ifdef Q_OS_LINUX
 #include <QFile>
+#include <unistd.h>
 #endif
 
 namespace {
@@ -95,12 +98,65 @@ bool readCpuTicks(quint64 &total, quint64 &idle)
 #endif
 }
 
+// Logical threads, or -1 when unknown.
+int readLogicalCores()
+{
+    const int ideal = QThread::idealThreadCount();
+    if (ideal > 0)
+        return ideal;
+#ifdef Q_OS_MACOS
+    int ncpu = 0;
+    size_t size = sizeof(ncpu);
+    if (::sysctlbyname("hw.ncpu", &ncpu, &size, nullptr, 0) == 0 && ncpu > 0)
+        return ncpu;
+#elif defined(Q_OS_LINUX)
+    const long n = ::sysconf(_SC_NPROCESSORS_ONLN);
+    if (n > 0)
+        return static_cast<int>(n);
+#endif
+    return -1;
+}
+
+// Physical cores, or logicalFallback/-1 when the platform gives no answer.
+int readPhysicalCores(int logicalFallback)
+{
+#ifdef Q_OS_MACOS
+    int phys = 0;
+    size_t size = sizeof(phys);
+    if (::sysctlbyname("hw.physicalcpu", &phys, &size, nullptr, 0) == 0 && phys > 0)
+        return phys;
+#elif defined(Q_OS_LINUX)
+    QFile cpuinfo(QStringLiteral("/proc/cpuinfo"));
+    if (cpuinfo.open(QIODevice::ReadOnly)) {
+        QSet<QString> packages;
+        int perPackage = -1;
+        while (!cpuinfo.atEnd()) {
+            const QString line = QString::fromUtf8(cpuinfo.readLine());
+            const int colon = line.indexOf(QLatin1Char(':'));
+            if (colon < 0)
+                continue;
+            if (line.startsWith(QLatin1String("physical id")))
+                packages.insert(line.mid(colon + 1).trimmed());
+            else if (line.startsWith(QLatin1String("cpu cores")))
+                perPackage = qMax(perPackage, line.mid(colon + 1).trimmed().toInt());
+        }
+        if (!packages.isEmpty() && perPackage > 0)
+            return packages.size() * perPackage;
+    }
+#else
+    Q_UNUSED(logicalFallback);
+#endif
+    return logicalFallback > 0 ? logicalFallback : -1;
+}
+
 } // namespace
 
 SystemStats::SystemStats(QObject *parent) : QObject(parent)
 {
     m_hostName = QSysInfo::machineHostName();
     m_platform = QSysInfo::prettyProductName();
+    m_cpuThreads = readLogicalCores();
+    m_cpuCores = readPhysicalCores(m_cpuThreads);
 
     // First sample only establishes the CPU baseline.
     sampleCpu();

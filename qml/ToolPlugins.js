@@ -144,6 +144,56 @@ function matchListening(line) {
     return 0
 }
 
+// Painted width/height ratio of each manifest icon (transparent margins
+// excluded), so headers can size icons by height: text stays vertically
+// centered while the icon runs slightly above and below it.
+function manifestAspect(manifest) {
+    switch (manifest) {
+    case "package.json": return 2.43
+    case "go.mod": return 2.67
+    case "composer.json": return 0.76
+    case "pom.xml": return 0.75
+    case "build.gradle": return 1.33
+    case "CMakeLists.txt": return 1.0
+    case "pyproject.toml": return 1.0
+    case "Gemfile": return 1.0
+    case "mix.exs": return 0.69
+    case "Cargo.toml": return 1.0
+    case "custom": return 0.88
+    default: return 1.0
+    }
+}
+
+// Header icon height: narrow glyphs (composer, custom) get a taller box
+// to hold visual weight, wide ones stay compact. Default 14.
+function manifestHeaderHeight(manifest) {
+    switch (manifest) {
+    case "composer.json": return 28
+    case "custom": return 24
+    default: return 14
+    }
+}
+// Manifest icons head the folder-page sections (sidebar uses the
+// file-terminal marker instead). "custom" uses the bash glyph (dual-theme,
+// no variants), unknown manifests the default glyph.
+// dark picks the light variant.
+function manifestIcon(manifest, dark) {
+    switch (manifest) {
+    case "package.json": return "npm-32px.png"
+    case "Cargo.toml": return dark ? "rust-dark-32px.png" : "rust-light-32px.png"
+    case "go.mod": return dark ? "go-dark-32px.png" : "go-light-32px.png"
+    case "pyproject.toml": return "python-32px.png"
+    case "pom.xml": return "java-32px.png"
+    case "build.gradle": return "gradle-32px.png"
+    case "CMakeLists.txt": return "cmake-32px.png"
+    case "composer.json": return "composer-32px.png"
+    case "Gemfile": return "ruby-32px.png"
+    case "mix.exs": return "elixir-32px.png"
+    case "custom": return dark ? "bash-dark.png" : "bash.png"
+    default: return "default-32px.png"
+    }
+}
+
 function stripSgr(s) {
     return s.replace(/\x1b\[[0-9;:?]*[ -/]*[@-~]/g, "")
 }

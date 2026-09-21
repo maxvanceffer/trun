@@ -9,6 +9,7 @@
 #include <QDir>
 #include <QFile>
 #include <QJsonDocument>
+#include <QLocale>
 #include <QRegularExpression>
 #include <QSocketNotifier>
 #include <QTextStream>
@@ -339,15 +340,38 @@ QJsonObject McpServer::callTool(const QJsonValue &id, const QString &name,
                               true);
         int tail = args.value(QStringLiteral("tail")).toInt(100);
         tail = qBound(1, tail, kMaxLogLines);
+        const QString query = args.value(QStringLiteral("query")).toString();
+        const QString level = args.value(QStringLiteral("level")).toString();
+        const QString channel = args.value(QStringLiteral("channel")).toString();
+        const int sinceMin = args.value(QStringLiteral("sinceMinutes")).toInt(-1);
         const QList<LogLine> buf = m_logs.value(commandId);
-        QStringList lines;
-        for (int i = qMax(0, buf.size() - tail); i < buf.size(); ++i) {
-            const LogLine &l = buf.at(i);
-            lines << QStringLiteral("[%1] %2: %3")
-                         .arg(QDateTime::fromMSecsSinceEpoch(l.timestampMs).toString(Qt::ISODate),
-                              l.target, l.message);
+        if (buf.isEmpty())
+            return toolResult(id, {});
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        const LogFilterQuery filter = {query, level.isEmpty() ? QStringList() : QStringList{level},
+                                       channel.isEmpty() ? QStringList() : QStringList{channel}};
+        QSet<QString> levels;
+        QSet<QString> channels;
+        QStringList matched;
+        for (const LogLine &l : buf) {
+            const ParsedLogLine p = LogParser::parse(l.message);
+            observe(p, levels, channels);
+            if (sinceMin >= 0 && nowMs - l.timestampMs > qint64(sinceMin) * 60000)
+                continue;
+            if (LogParser::applyFilter(p, l.message, filter) != LogFilterHit::Shown)
+                continue;
+            matched << QStringLiteral("[%1] %2: %3")
+                           .arg(QDateTime::fromMSecsSinceEpoch(l.timestampMs).toString(Qt::ISODate),
+                                l.target, l.message);
         }
-        return toolResult(id, lines.join(u'\n'));
+        const bool truncated = matched.size() > tail;
+        const int matchedTotal = matched.size();
+        while (matched.size() > tail)
+            matched.removeFirst();
+        QStringList out{resultHeader(matchedTotal, buf.size(), sorted(levels),
+                                     sorted(channels), truncated)};
+        out.append(matched);
+        return toolResult(id, out.join(u'\n'));
     }
 
     if (name == QStringLiteral("search_logs")) {
@@ -356,15 +380,24 @@ QJsonObject McpServer::callTool(const QJsonValue &id, const QString &name,
             return toolResult(id, QStringLiteral("unknown project"), true);
         const QString query = args.value(QStringLiteral("query")).toString();
         const QString level = args.value(QStringLiteral("level")).toString();
+        const QString channel = args.value(QStringLiteral("channel")).toString();
         const QString date = args.value(QStringLiteral("date")).toString();
+        const int sinceMin = args.value(QStringLiteral("sinceMinutes")).toInt(-1);
         int maxResults = args.value(QStringLiteral("maxResults")).toInt(100);
         maxResults = qBound(1, maxResults, 500);
         const QString base = project.value(QStringLiteral("project_path")).toString();
 
+        const LogFilterQuery filter = {query, level.isEmpty() ? QStringList() : QStringList{level},
+                                       channel.isEmpty() ? QStringList() : QStringList{channel}};
+        const qint64 nowMs = QDateTime::currentMSecsSinceEpoch();
+        QSet<QString> levels;
+        QSet<QString> channels;
         QStringList hits;
+        int scanned = 0;
+        bool truncated = false;
         for (const QString &sub : kLogDirs) {
             const QDir dir(base + u'/' + sub);
-            if (!dir.exists())
+            if (!dir.exists() || truncated)
                 continue;
             const QFileInfoList files =
                 dir.entryInfoList(QStringList{QStringLiteral("*.log")}, QDir::Files,
@@ -382,18 +415,45 @@ QJsonObject McpServer::callTool(const QJsonValue &id, const QString &name,
                     const QString line = QString::fromUtf8(raw).trimmed();
                     if (line.isEmpty())
                         continue;
-                    if (!monologMatch(line, date, level, query).isEmpty()) {
-                        hits << QStringLiteral("%1:%2: %3")
-                                      .arg(dir.dirName() + u'/' + fi.fileName())
-                                      .arg(lineNo)
-                                      .arg(line.left(500));
-                        if (hits.size() >= maxResults)
-                            return toolResult(id, hits.join(u'\n'));
+                    ++scanned;
+                    const ParsedLogLine p = LogParser::parse(line);
+                    observe(p, levels, channels);
+                    if (!date.isEmpty()) {
+                        // Legacy prefix: текст первой [...] скобки сырой строки.
+                        QString lineDate;
+                        if (line.startsWith(u'[')) {
+                            const int end = line.indexOf(u']');
+                            if (end > 0)
+                                lineDate = line.mid(1, end - 1);
+                        }
+                        if (!lineDate.startsWith(date))
+                            continue;
+                    }
+                    if (sinceMin >= 0) {
+                        const QDateTime dt = parsedTimestamp(p);
+                        if (!dt.isValid() || dt.msecsTo(QDateTime::fromMSecsSinceEpoch(nowMs))
+                                > qint64(sinceMin) * 60000)
+                            continue;
+                    }
+                    if (LogParser::applyFilter(p, line, filter) != LogFilterHit::Shown)
+                        continue;
+                    hits << QStringLiteral("%1:%2: %3")
+                                   .arg(dir.dirName() + u'/' + fi.fileName())
+                                   .arg(lineNo)
+                                   .arg(line.left(500));
+                    if (hits.size() >= maxResults) {
+                        truncated = true;
+                        break;
                     }
                 }
+                if (truncated)
+                    break;
             }
         }
-        return toolResult(id, hits.join(u'\n'));
+        QStringList out{resultHeader(hits.size(), scanned, sorted(levels),
+                                     sorted(channels), truncated)};
+        out.append(hits);
+        return toolResult(id, out.join(u'\n'));
     }
 
     if (name == QStringLiteral("docker_status")) {
@@ -530,17 +590,32 @@ QJsonArray McpServer::toolDefinitions() const
              {"project", "command"}),
         tool("stop", "Stop all runs of a command",
              {{"commandId", str("Bare id or projectId|commandId")}}, {"commandId"}),
-        tool("read_log", "Last console lines of a command",
+        tool("read_log", "Last console lines of a command, with structured filters "
+                            "(query/level/channel/sinceMinutes, AND). Reply starts with a header: "
+                            "matched/total counts, observed levels/channels, truncated flag",
              {{"commandId", str("Bare id or projectId|commandId")},
               {"tail",
-               QJsonObject{{"type", "integer"}, {"description", "Line count (default 100)"}}}},
+               QJsonObject{{"type", "integer"}, {"description", "Line count (default 100)"}}},
+              {"query", str("Substring to match (case-insensitive)")},
+              {"level", str("Exact level, e.g. ERROR")},
+              {"channel", str("Exact channel, e.g. doctrine")},
+              {"sinceMinutes",
+               QJsonObject{{"type", "integer"},
+                           {"description", "Only lines from the last N minutes"}}}},
              {"commandId"}),
         tool("search_logs",
-             "Search project log files (monolog-aware: date, level) with plain-text fallback",
+             "Search project log files with structured filters (query/level/channel/"
+             "sinceMinutes, AND; date is a legacy prefix filter). Reply starts with a header: "
+             "matched/scanned counts, observed levels/channels, truncated flag. "
+             "Unparsed lines match query only",
              {{"project", str("Project id or path")},
               {"query", str("Substring to match")},
               {"level", str("Log level, e.g. ERROR")},
+              {"channel", str("Channel, e.g. doctrine")},
               {"date", str("Date prefix, e.g. 2026-09-10")},
+              {"sinceMinutes",
+               QJsonObject{{"type", "integer"},
+                           {"description", "Only lines from the last N minutes"}}},
               {"maxResults",
                QJsonObject{{"type", "integer"}, {"description", "Cap (default 100)"}}}},
              {"project"}),
@@ -621,36 +696,46 @@ void McpServer::appendLog(const QString &commandId, const QString &level,
         buf.removeFirst();
 }
 
-QJsonObject McpServer::monologMatch(const QString &line, const QString &date,
-                                    const QString &level, const QString &query)
+QString McpServer::resultHeader(int matched, int total, const QStringList &levels,
+                                const QStringList &channels, bool truncated)
 {
-    // Monolog: "[2026-09-10T12:00:00+00:00] channel.LEVEL: message"
-    QString lineLevel;
-    QString lineDate;
-    if (line.startsWith(u'[')) {
-        const int end = line.indexOf(u']');
-        if (end > 0) {
-            lineDate = line.mid(1, end - 1);
-            const int dot = line.indexOf(u'.', end);
-            const int colon = line.indexOf(u':', end);
-            if (dot > 0 && colon > dot)
-                lineLevel = line.mid(dot + 1, colon - dot - 1);
-        }
+    QStringList head{QStringLiteral("# matched %1 of %2, truncated: %3")
+                         .arg(matched)
+                         .arg(total)
+                         .arg(truncated ? QStringLiteral("yes") : QStringLiteral("no"))};
+    if (!levels.isEmpty())
+        head << QStringLiteral("# levels: ") + levels.join(QStringLiteral(", "));
+    if (!channels.isEmpty())
+        head << QStringLiteral("# channels: ") + channels.join(QStringLiteral(", "));
+    return head.join(u'\n');
+}
+
+QDateTime McpServer::parsedTimestamp(const ParsedLogLine &p)
+{
+    QDateTime dt = QDateTime::fromString(p.layerTimestamp, Qt::ISODateWithMs);
+    if (!dt.isValid())
+        dt = QDateTime::fromString(p.layerTimestamp, Qt::ISODate);
+    if (!dt.isValid() && !p.layerTimestamp.isEmpty()) {
+        // CLF "10/Oct/2000:13:55:36 -0700" (access-логи).
+        static const QLocale c(QLocale::C);
+        dt = c.toDateTime(p.layerTimestamp, QStringLiteral("dd/MMM/yyyy:HH:mm:ss t"));
     }
-    if (!date.isEmpty() && !lineDate.startsWith(date))
-        return {};
-    if (!level.isEmpty()) {
-        if (!lineLevel.isEmpty()) {
-            // Monolog line: exact level match only ("userErrors" must not
-            // match level=ERROR)
-            if (lineLevel.compare(level, Qt::CaseInsensitive) != 0)
-                return {};
-        } else if (!line.contains(level, Qt::CaseInsensitive)) {
-            // Plain line: substring fallback
-            return {};
-        }
-    }
-    if (!query.isEmpty() && !line.contains(query, Qt::CaseInsensitive))
-        return {};
-    return QJsonObject{{QStringLiteral("text"), line}};
+    return dt;
+}
+
+void McpServer::observe(const ParsedLogLine &p, QSet<QString> &levels, QSet<QString> &channels)
+{
+    if (!p.ok)
+        return;
+    if (!p.level.isEmpty())
+        levels.insert(p.level);
+    if (!p.channel.isEmpty())
+        channels.insert(p.channel);
+}
+
+QStringList McpServer::sorted(const QSet<QString> &s)
+{
+    QStringList out(s.begin(), s.end());
+    out.sort();
+    return out;
 }

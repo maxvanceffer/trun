@@ -26,6 +26,9 @@ class ProjectService : public QObject {
     Q_PROPERTY(QmlTreeModel *treeModel READ treeModel CONSTANT)
     Q_PROPERTY(QJsonObject activeProject READ activeProject WRITE setActiveProject NOTIFY activeProjectChanged)
     Q_PROPERTY(QList<QJsonObject> activeProjectCommands READ activeProjectCommands NOTIFY activeProjectCommandsChanged)
+    // Selected folder ({path, name}) and its manifest projects for the folder page.
+    Q_PROPERTY(QJsonObject activeFolder READ activeFolder NOTIFY activeFolderChanged)
+    Q_PROPERTY(QList<QJsonObject> activeFolderProjects READ activeFolderProjects NOTIFY activeFolderProjectsChanged)
     Q_PROPERTY(int projectCount READ projectCount NOTIFY projectsChanged)
     Q_PROPERTY(QVariantList pinnedCommands READ pinnedCommands NOTIFY pinnedChanged)
     // Recently run commands (persisted), newest first.
@@ -55,6 +58,14 @@ public:
     // projects to the workspace — rescanning it would only duplicate.
     Q_INVOKABLE bool isFolderKnown(const QString &folderPath) const;
     Q_INVOKABLE void selectProject(const QString &projectId);
+    // Selects a folder for the folder page (its manifest projects grouped
+    // in sections). Independent from the active project used by detail pages.
+    Q_INVOKABLE void selectFolder(const QString &folderPath);
+    // Display name of a folder (git repo name, else folder name).
+    Q_INVOKABLE QString folderDisplayName(const QString &folderPath) const;
+    // Breadcrumb segments from the workspace root to the folder
+    // ([{name, path}...]); a single segment when outside known roots.
+    Q_INVOKABLE QVariantList folderCrumbs(const QString &folderPath) const;
     // Adds a user-defined command to a folder. Attaches to the folder's
     // scanned project, or to a "custom" pseudo-project when the folder has
     // none. Returns "projectId|commandId", empty on failure.
@@ -88,6 +99,8 @@ public:
     QJsonObject activeProject() const { return m_activeProject; }
     void setActiveProject(const QJsonObject &project);
     QList<QJsonObject> activeProjectCommands() const;
+    QJsonObject activeFolder() const { return m_activeFolder; }
+    QList<QJsonObject> activeFolderProjects() const { return m_activeFolderProjects; }
 
 signals:
     void projectsChanged();
@@ -99,6 +112,8 @@ signals:
     void scanComplete(int projectCount);
     void activeProjectChanged();
     void activeProjectCommandsChanged();
+    void activeFolderChanged();
+    void activeFolderProjectsChanged();
     void projectSelected();
     void commandStarted(int pid, int memoryMb);
     void commandStopped(int pid);
@@ -120,6 +135,9 @@ private:
     QList<QJsonObject> m_recents; // {projectId, commandId, label, ...}, persisted
     QJsonObject m_activeProject;
     QList<QJsonObject> m_activeProjectCommands;
+    QJsonObject m_activeFolder; // {path, name} for the folder page
+    QList<QJsonObject> m_activeFolderProjects; // manifest projects at that path
+    void refreshActiveFolderProjects();
     QSet<QString> m_visitedDirs;
     void persistWorkspace(const QString &rootPath);
     void applyProjects(const QList<QJsonObject> &projects);

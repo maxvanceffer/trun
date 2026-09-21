@@ -11,7 +11,8 @@ TestCase {
         height: 600
     }
 
-    // Test case: TreeModel has correct item count after adding projects
+    // Test case: TreeModel has correct item count after adding manifests.
+    // The tree shows folders only; manifests live on folder nodes.
     function test_tree_model_item_count() {
         var model = Qt.createQmlObject(
             'import Trun.Models 1.0; QmlTreeModel { }',
@@ -20,109 +21,101 @@ TestCase {
         )
         compare(model.rowCount(), 0, "Model should start empty")
 
-        model.addProject("/test/project1", "Project 1", "Test Project 1", "package.json", [])
-        compare(model.rowCount(), 1, "Should have 1 project")
+        model.setRootPath("/test")
+        model.addProjectManifest("/test/project1", "package.json")
+        compare(model.rowCount(), 1, "Should have 1 root")
 
-        model.addProject("/test/project2", "Project 2", "Test Project 2", "Cargo.toml", [])
-        compare(model.rowCount(), 2, "Should have 2 projects")
-
-        model.addFolder("/test/folder", "/test/folder")
-        compare(model.rowCount(), 3, "Should have 3 items")
+        model.addProjectManifest("/test/project2", "Cargo.toml")
+        var rootIdx = model.index(0, 0)
+        compare(model.rowCount(rootIdx), 2, "Root should have 2 folders")
 
         model.destroy()
     }
 
-    // Test case: icon mapping for package.json manifest
-    function test_icon_mapping_package_json() {
+    // Test case: leaf folders with manifests navigate directly (no children)
+    function test_leaf_folder_has_manifests_flag() {
         var model = Qt.createQmlObject(
             'import Trun.Models 1.0; QmlTreeModel { }',
             testWindow,
             "testModel2"
         )
 
-        model.addProject(
-            "/test/npm-project",
-            "NpmProject",
-            "NPM Project",
-            "package.json",
-            []
-        )
+        model.setRootPath("/test")
+        model.addProjectManifest("/test/npm-project", "package.json")
 
-        var idx = model.index(0, 0)
-        verify(idx.isValid(), "Index should be valid")
+        var rootIdx = model.index(0, 0)
+        verify(rootIdx.isValid(), "Root index should be valid")
 
-        var manifest = model.data(idx, model.ManifestRole)
-        compare(manifest, "package.json", "Manifest should be package.json")
-
-        var name = model.data(idx, model.NameRole)
-        compare(name, "NpmProject", "Name should be NpmProject")
+        var folderIdx = model.index(0, 0, rootIdx)
+        verify(folderIdx.isValid(), "Folder index should be valid")
+        compare(model.data(folderIdx, model.ItemTypeRole), "folder")
+        compare(model.data(folderIdx, model.HasManifestsRole), true)
+        compare(model.rowCount(folderIdx), 0, "Leaf folder has no children")
 
         model.destroy()
     }
 
-    // Test case: icon mapping for Cargo.toml manifest
-    function test_icon_mapping_cargo_toml() {
+    // Test case: hybrid folders (manifests plus subfolders) grow one entry
+    function test_hybrid_folder_manifests_entry() {
         var model = Qt.createQmlObject(
             'import Trun.Models 1.0; QmlTreeModel { }',
             testWindow,
             "testModel3"
         )
 
-        model.addProject(
-            "/test/rust-project",
-            "RustProject",
-            "Rust Project",
-            "Cargo.toml",
-            []
-        )
+        model.setRootPath("/test")
+        model.addProjectManifest("/test/mixed", "package.json")
+        model.addProjectManifest("/test/mixed/sub", "go.mod")
 
-        var idx = model.index(0, 0)
-        var manifest = model.data(idx, model.ManifestRole)
-        compare(manifest, "Cargo.toml", "Manifest should be Cargo.toml")
+        var mixedIdx = model.index(0, 0, model.index(0, 0))
+        verify(mixedIdx.isValid(), "Mixed folder index should be valid")
+        compare(model.rowCount(mixedIdx), 2, "Entry plus one subfolder")
+
+        var entryIdx = model.index(0, 0, mixedIdx)
+        compare(model.data(entryIdx, model.ItemTypeRole), "manifests")
+        compare(model.data(entryIdx, model.FolderPathRole), "/test/mixed")
+        compare(model.data(entryIdx, model.ManifestRole), "package.json")
 
         model.destroy()
     }
 
-    // Test case: folder expand/collapse works via TreeView expandedRows
-    function test_folder_expansion() {
+    // Test case: entry icon becomes the stack on the second manifest
+    function test_manifests_entry_stack() {
         var model = Qt.createQmlObject(
             'import Trun.Models 1.0; QmlTreeModel { }',
             testWindow,
             "testModel4"
         )
 
-        model.addFolder("/test/folder", "/test/folder")
-        model.addProject("/test/folder/project", "FolderProject", "In Folder", "go.mod", [])
+        model.setRootPath("/test")
+        model.addProjectManifest("/test/mixed", "package.json")
+        model.addProjectManifest("/test/mixed/sub", "go.mod")
+        model.addProjectManifest("/test/mixed", "composer.json")
 
-        var folderIdx = model.index(0, 0)
-        compare(model.rowCount(folderIdx), 1, "Folder should have 1 child")
-
-        verify(folderIdx.isValid(), "Folder index should be valid")
+        var entryIdx = model.index(0, 0, model.index(0, 0, model.index(0, 0)))
+        compare(model.data(entryIdx, model.ItemTypeRole), "manifests")
+        compare(model.data(entryIdx, model.ManifestRole), "",
+            "Several manifests: stack icon, no single name")
 
         model.destroy()
     }
 
-    // Test case: project selection triggers correct command count
-    function test_project_command_count() {
+    // Test case: folders nest implicitly for nested manifest paths
+    function test_folder_expansion() {
         var model = Qt.createQmlObject(
             'import Trun.Models 1.0; QmlTreeModel { }',
             testWindow,
             "testModel5"
         )
 
-        var commands = [{"name": "run", "command": "npm run start"}, {"name": "test", "command": "npm test"}]
-        model.addProject(
-            "/test/commands-project",
-            "CommandsProject",
-            "Has commands",
-            "package.json",
-            commands
-        )
+        model.setRootPath("/test")
+        model.addProjectManifest("/test/folder/project", "go.mod")
 
-        var idx = model.index(0, 0)
-        var cmdData = model.data(idx, model.CommandsRole)
-
-        verify(cmdData !== null, "Commands data should not be null")
+        var folderIdx = model.index(0, 0, model.index(0, 0))
+        verify(folderIdx.isValid(), "Folder index should be valid")
+        compare(model.data(folderIdx, model.ItemTypeRole), "folder")
+        compare(model.data(folderIdx, model.HasManifestsRole), false)
+        compare(model.rowCount(folderIdx), 1, "Folder should have 1 child")
 
         model.destroy()
     }

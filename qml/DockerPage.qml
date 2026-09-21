@@ -318,12 +318,12 @@ Item {
 
                     background: Rectangle {
                         radius: 6
-                        color: "#dc2626"
+                        color: Theme.destructive
                     }
 
                     contentItem: Label {
                         text: qsTr("Remove")
-                        color: "white"
+                        color: Theme.destructiveForeground
                         font.pixelSize: 12
                         font.bold: true
                         horizontalAlignment: Text.AlignHCenter

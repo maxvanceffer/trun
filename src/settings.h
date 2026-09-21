@@ -8,6 +8,8 @@
 
 class Settings : public QObject {
     Q_OBJECT
+    Q_PROPERTY(bool showGitBranch READ showGitBranch WRITE setShowGitBranch NOTIFY showGitBranchChanged)
+    Q_PROPERTY(bool gitBranchTopOnly READ gitBranchTopOnly WRITE setGitBranchTopOnly NOTIFY gitBranchTopOnlyChanged)
 
 public:
     explicit Settings(QObject *parent = nullptr);
@@ -30,9 +32,15 @@ public:
     void setCacheVersion(int version);
     Q_INVOKABLE void clearWorkspace();
     Q_INVOKABLE bool hasWorkspace() const;
+    bool showGitBranch() const;
+    void setShowGitBranch(bool show);
+    bool gitBranchTopOnly() const;
+    void setGitBranchTopOnly(bool topOnly);
 
 signals:
     void workspaceChanged();
+    void showGitBranchChanged();
+    void gitBranchTopOnlyChanged();
 
 private:
     QSettings m_settings;

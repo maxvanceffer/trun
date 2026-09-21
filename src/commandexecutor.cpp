@@ -2,8 +2,11 @@
 
 #include <QDir>
 #include <QFileInfo>
+#include <QProcess>
 #include <QProcessEnvironment>
 #include <QRegularExpression>
+#include <QStandardPaths>
+#include <QTimer>
 
 #ifndef Q_OS_WINDOWS
 #include <signal.h>
@@ -67,6 +70,70 @@ bool pidAliveWithCommand(int pid, const QString &command)
 #endif
 }
 
+// GUI apps on macOS start with a minimal PATH (/usr/bin:/bin:...),
+// while tools live in /opt/homebrew/bin, /usr/local/bin, ~/.local/bin.
+// A bare `composer` then dies with the cryptic
+// "Child process set up failed: execve: No such file or directory".
+// Enrich PATH from the login shell once and resolve bare names to
+// absolute paths so the console shows a clear error instead.
+QString loginShellPath()
+{
+#ifdef Q_OS_WINDOWS
+    return {};
+#else
+    static QString cached;
+    static bool done = false;
+    if (done)
+        return cached;
+    done = true;
+    for (const char *shell : {"/bin/zsh", "/bin/bash"}) {
+        if (!QFileInfo::exists(QString::fromUtf8(shell)))
+            continue;
+        QProcess p;
+        p.start(QString::fromUtf8(shell), {"-l", "-c", "printf %s \"$PATH\""});
+        if (!p.waitForFinished(2000))
+            continue;
+        const QString out = QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+        if (!out.isEmpty()) {
+            cached = out;
+            break;
+        }
+    }
+    return cached;
+#endif
+}
+
+QString enrichedPath(const QString &base)
+{
+    QStringList seen = base.split(QLatin1Char(':'), Qt::SkipEmptyParts);
+    auto addMissing = [&](const QString &p) {
+        if (!p.isEmpty() && !seen.contains(p))
+            seen << p;
+    };
+    for (const QString &p : loginShellPath().split(QLatin1Char(':'), Qt::SkipEmptyParts))
+        addMissing(p);
+    // Hard fallback: Homebrew + common spots when no login shell is available
+    addMissing(QStringLiteral("/opt/homebrew/bin"));
+    addMissing(QStringLiteral("/opt/homebrew/sbin"));
+    addMissing(QStringLiteral("/usr/local/bin"));
+    const QString home = QDir::homePath();
+    if (!home.isEmpty()) {
+        addMissing(home + QStringLiteral("/.local/bin"));
+        addMissing(home + QStringLiteral("/.cargo/bin"));
+        addMissing(home + QStringLiteral("/go/bin"));
+    }
+    return seen.join(QLatin1Char(':'));
+}
+
+QString resolveExecutable(const QString &command, const QString &pathEnv)
+{
+    if (command.isEmpty() || command.contains(QLatin1Char('/')))
+        return command;
+    const QString found = QStandardPaths::findExecutable(
+        command, pathEnv.split(QLatin1Char(':'), Qt::SkipEmptyParts));
+    return found.isEmpty() ? command : found;
+}
+
 } // namespace
 
 CommandExecutor::CommandExecutor(QObject *parent) : QObject(parent) {}
@@ -87,18 +154,57 @@ int CommandExecutor::runWithEnv(const QString &command, const QStringList &args,
 
     const int id = m_nextId++;
 
+    QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
+    bool pathOverridden = false;
+    for (const QString &pair : envPairs) {
+        const int eq = pair.indexOf(QLatin1Char('='));
+        if (eq > 0) {
+            const QString key = pair.left(eq).trimmed();
+            if (key == QLatin1String("PATH"))
+                pathOverridden = true;
+            env.insert(key, pair.mid(eq + 1).trimmed());
+        }
+    }
+    // GUI launches (Finder/open) miss Homebrew & user bins: enrich PATH so
+    // bare `composer`/`php`/`symfony` resolve and their shebangs (`env php`)
+    // find the interpreter. An explicit PATH= override is respected as-is.
+    if (!pathOverridden)
+        env.insert(QStringLiteral("PATH"), enrichedPath(env.value(QStringLiteral("PATH"))));
+
+    // Fail fast with an actionable message instead of the cryptic
+    // "Child process set up failed: execve: No such file or directory".
+    auto deferFailure = [this](int failId, const QString &message) {
+        QTimer::singleShot(0, this, [this, failId, message]() {
+            // The run may have been stopped in the meantime; then stay quiet.
+            if (!m_processes.contains(failId) || m_killRequested.contains(failId))
+                return;
+            finishWithFailure(failId, message);
+        });
+    };
+    if (!workingDir.isEmpty() && !QDir(workingDir).exists()) {
+        auto *process = new QProcess(this);
+        m_processes.insert(id, Proc{process, {}, {}, label.isEmpty() ? command : label,
+                                    commandId, QDateTime::currentDateTime()});
+        emit runningCommandsChanged();
+        deferFailure(id, tr("working directory does not exist: %1").arg(workingDir));
+        return id;
+    }
+    QString program = resolveExecutable(command, env.value(QStringLiteral("PATH")));
+    if (!program.contains(QLatin1Char('/'))) {
+        // Still unresolvable after PATH enrichment: report which PATH was tried.
+        auto *process = new QProcess(this);
+        m_processes.insert(id, Proc{process, {}, {}, label.isEmpty() ? command : label,
+                                    commandId, QDateTime::currentDateTime()});
+        emit runningCommandsChanged();
+        deferFailure(id, tr("executable not found in PATH: '%1' (PATH=%2)")
+                                 .arg(command, env.value(QStringLiteral("PATH"))));
+        return id;
+    }
+
     auto *process = new QProcess(this);
+    process->setProcessEnvironment(env);
     if (!workingDir.isEmpty())
         process->setWorkingDirectory(workingDir);
-    if (!envPairs.isEmpty()) {
-        QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
-        for (const QString &pair : envPairs) {
-            const int eq = pair.indexOf(QLatin1Char('='));
-            if (eq > 0)
-                env.insert(pair.left(eq).trimmed(), pair.mid(eq + 1).trimmed());
-        }
-        process->setProcessEnvironment(env);
-    }
 
     m_processes.insert(id, Proc{process, {}, {}, label.isEmpty() ? command : label, commandId,
                                QDateTime::currentDateTime()});
@@ -145,7 +251,7 @@ int CommandExecutor::runWithEnv(const QString &command, const QStringList &args,
         emit runningCommandsChanged();
     });
 
-    process->start(command, args);
+    process->start(program, args);
     return id;
 }
 

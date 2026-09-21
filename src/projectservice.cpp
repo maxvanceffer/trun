@@ -319,15 +319,27 @@ void ProjectService::applyProjects(const QList<QJsonObject> &projects)
         emit activeProjectChanged();
         emit activeProjectCommandsChanged();
     }
+    // Refresh the folder selection: rescan may have changed its projects.
+    if (!m_activeFolder.isEmpty()) {
+        const QString folderPath = m_activeFolder.value(QStringLiteral("path")).toString();
+        if (!QDir(folderPath).exists()) {
+            m_activeFolder = QJsonObject();
+            m_activeFolderProjects.clear();
+            emit activeFolderChanged();
+            emit activeFolderProjectsChanged();
+        } else {
+            m_activeFolder[QStringLiteral("name")] =
+                QmlTreeModel::folderDisplayName(folderPath);
+            emit activeFolderChanged();
+            refreshActiveFolderProjects();
+        }
+    }
     m_treeModel->clear();
     m_treeModel->setRootPaths(m_rootPaths);
     for (const auto &project : m_projects) {
-        m_treeModel->addProject(
+        m_treeModel->addProjectManifest(
             project.value(QStringLiteral("project_path")).toString(),
-            project.value(QStringLiteral("name")).toString(),
-            project.value(QStringLiteral("description")).toString(),
-            project.value(QStringLiteral("manifest")).toString(),
-            QVariant::fromValue(project.value(QStringLiteral("commands")).toArray())
+            project.value(QStringLiteral("manifest")).toString()
         );
     }
     m_projectListModel->setProjects(m_projects);
@@ -1104,6 +1116,70 @@ QList<QJsonObject> ProjectService::detectCommands(const QString &manifestPath, c
     }
 
     return commands;
+}
+
+void ProjectService::selectFolder(const QString &folderPath)
+{
+    const QString clean = QDir::cleanPath(folderPath);
+    if (clean.isEmpty() || !QDir(clean).exists())
+        return;
+    m_activeFolder = QJsonObject{
+        {QStringLiteral("path"), clean},
+        {QStringLiteral("name"), QmlTreeModel::folderDisplayName(clean)},
+    };
+    emit activeFolderChanged();
+    refreshActiveFolderProjects();
+    logMessage("info", "select", "Active folder: " + clean);
+}
+
+void ProjectService::refreshActiveFolderProjects()
+{
+    m_activeFolderProjects.clear();
+    const QString path = m_activeFolder.value(QStringLiteral("path")).toString();
+    if (!path.isEmpty()) {
+        for (const auto &p : m_projects) {
+            if (QDir::cleanPath(p.value(QStringLiteral("project_path")).toString()) == path)
+                m_activeFolderProjects.append(p);
+        }
+    }
+    emit activeFolderProjectsChanged();
+}
+
+QString ProjectService::folderDisplayName(const QString &folderPath) const
+{
+    return QmlTreeModel::folderDisplayName(QDir::cleanPath(folderPath));
+}
+
+QVariantList ProjectService::folderCrumbs(const QString &folderPath) const
+{
+    QVariantList out;
+    const QString clean = QDir::cleanPath(folderPath);
+    if (clean.isEmpty())
+        return out;
+    // Deepest containing workspace root first.
+    QString root;
+    for (const QString &r : m_rootPaths) {
+        if ((clean == r || clean.startsWith(r + QLatin1Char('/')))
+            && r.size() > root.size())
+            root = r;
+    }
+    if (root.isEmpty() || clean == root) {
+        out << QVariantMap{
+            {QStringLiteral("name"), QmlTreeModel::folderDisplayName(clean)},
+            {QStringLiteral("path"), clean},
+        };
+        return out;
+    }
+    QString acc = root;
+    for (const QString &part :
+         QDir(root).relativeFilePath(clean).split(QLatin1Char('/'), Qt::SkipEmptyParts)) {
+        acc = QDir::cleanPath(acc + QLatin1Char('/') + part);
+        out << QVariantMap{
+            {QStringLiteral("name"), QmlTreeModel::folderDisplayName(acc)},
+            {QStringLiteral("path"), acc},
+        };
+    }
+    return out;
 }
 
 void ProjectService::selectProject(const QString &projectId) {

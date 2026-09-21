@@ -2,15 +2,22 @@
 
 #include <QAbstractItemModel>
 #include <QList>
-#include <QJsonObject>
+#include <QSet>
+#include <QTimer>
 
 // ============================================================
-// QmlTreeItem — node in the tree (folder or project)
+// QmlTreeItem — node in the sidebar tree (folder or manifests entry)
+//
+// The tree shows folders only: per-manifest project nodes are gone.
+// A folder holding manifests directly navigates to its folder page;
+// a hybrid folder (manifests plus subfolders) grows one ManifestsEntry
+// child that navigates instead. Per-manifest data (names, commands)
+// lives in ProjectService, keyed by "<path>/<manifest>".
 // ============================================================
 class QmlTreeItem {
     friend class QmlTreeModel;
 public:
-    enum Type { Folder, Project };
+    enum Type { Folder, ManifestsEntry };
 
     explicit QmlTreeItem(Type type, QmlTreeItem* parent = nullptr);
     ~QmlTreeItem();
@@ -22,52 +29,54 @@ public:
 
     void appendChild(QmlTreeItem* child);
 
-    // === Folder ===
+    // === Folder & ManifestsEntry ===
     Type type() const { return m_type; }
     QString name() const { return m_name; }
     QString path() const { return m_path; }
 
-    // === Project ===
+    // === Folder: manifests found directly in it ===
+    bool hasManifests() const { return !m_manifests.isEmpty(); }
+
+    // === ManifestsEntry: the single manifest name, or empty for several ===
     QString manifest() const { return m_manifest; }
-    QString description() const { return m_description; }
-    QVariant commands() const { return m_commands; }
 
 private:
     Type m_type;
     QString m_name;
     QString m_path;
-    QString m_manifest;
-    QString m_description;
-    QVariant m_commands;
+    QString m_gitBranch;
+    QSet<QString> m_manifests; // folders only
+    QString m_manifest; // entries only
     QmlTreeItem* m_parent;
     QList<QmlTreeItem*> m_children;
 };
 
 // ============================================================
-// QmlTreeModel — hierarchical model for TreeView
+// QmlTreeModel — folder tree for the sidebar TreeView
 // Exposes:
-//   - treeModel (registered QML type, same API as old ProjectListModel)
-//   - folderName  — for folders (name) / projects (project folder name)
-//   - folderPath  — for folders (path) / projects (project folder path)
-//   - name        — project name (only for projects)
-//   - project_path — project path (only for projects)
-//   - manifest    — manifest name (only for projects)
-//   - description — project description (only for projects)
-//   - commands    — commands array (only for projects)
+//   - item_type   — "folder" or "manifests"
+//   - folderName  — display name (git repo name, else folder name)
+//   - folderPath  — absolute folder path
+//   - hasManifests — the folder holds manifests directly
+//   - manifest    — single manifest name, or "" for several/none.
+//                   Folders expose their own manifests (leaf icon);
+//                   entries expose the folder's (entry icon).
 // ============================================================
 class QmlTreeModel : public QAbstractItemModel {
     Q_OBJECT
+    // Bumped every time any cached branch changes; lets QML bindings
+    // that call gitBranchForPath() refresh (plain function calls have
+    // no change tracking on their own).
+    Q_PROPERTY(int gitBranchesVersion READ gitBranchesVersion NOTIFY gitBranchesChanged)
 
 public:
     enum Roles {
         ItemTypeRole = Qt::UserRole + 1,
         FolderNameRole,
         FolderPathRole,
-        NameRole,
-        ProjectIdRole,
-        DescriptionRole,
+        HasManifestsRole,
         ManifestRole,
-        CommandsRole
+        GitBranchRole,
     };
     Q_ENUM(Roles)
 
@@ -77,14 +86,17 @@ public:
     void setRootPath(const QString &rootPath);
     // Multiple workspace roots: one top-level node per root.
     void setRootPaths(const QStringList &rootPaths);
-    Q_INVOKABLE void addProject(
-        const QString &projectPath,
-        const QString &name,
-        const QString &description,
-        const QString &manifest,
-        const QVariant &commands
-    );
+    // Records one manifest in a folder; maintains the entry child.
+    Q_INVOKABLE void addProjectManifest(const QString &projectPath,
+                                        const QString &manifest);
     Q_INVOKABLE void clear();
+
+    // Folder label: git repo name when the folder is a repo, else its name.
+    static QString folderDisplayName(const QString &absoluteFolderPath);
+
+    // Cached branch for an absolute folder path, "" when unknown.
+    Q_INVOKABLE QString gitBranchForPath(const QString &path) const;
+    int gitBranchesVersion() const { return m_gitBranchesVersion; }
 
     // QAbstractItemModel
     QModelIndex index(int row, int column, const QModelIndex &parent = QModelIndex()) const override;
@@ -94,7 +106,12 @@ public:
     QVariant data(const QModelIndex &index, int role = Qt::DisplayRole) const override;
     QHash<int, QByteArray> roleNames() const override;
 
+signals:
+    void gitBranchesChanged();
+
 private:
+    void refreshGitBranches();
+    QTimer m_gitRefreshTimer;
     QModelIndex indexForItem(QmlTreeItem *item) const;
     QmlTreeItem* getItem(const QModelIndex &index) const;
     QmlTreeItem* rootItem;
@@ -103,9 +120,11 @@ private:
 
     // Visible top-level nodes, one per workspace root.
     QList<QmlTreeItem*> m_rootFolders;
+    int m_gitBranchesVersion = 0;
 
     QmlTreeItem* ensureFolder(const QString &absoluteFolderPath);
 
-    // Folder label: git repo name when the folder is a repo, else its name.
-    static QString folderDisplayName(const QString &absoluteFolderPath);
+    // Keeps the ManifestsEntry child in sync: present at row 0 exactly
+    // when the folder holds manifests and has subfolder children.
+    void syncManifestsEntry(QmlTreeItem *folder);
 };

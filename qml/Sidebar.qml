@@ -24,14 +24,14 @@ Rectangle {
             : Theme.sidebarBackground
     }
 
-    signal projectSelected(string projectId)
+    signal folderSelected(string folderPath)
     signal dashboardRequested()
     signal databasesRequested()
     signal dockerRequested()
     signal mcpConfigureRequested()
     signal updateCheckRequested()
     signal addProjectsRequested()
-    signal addCustomRequested(string folderPath)
+    signal settingsRequested()
     signal closeRequested()
     signal minimizeRequested()
     signal maximizeRequested()
@@ -282,12 +282,9 @@ Rectangle {
             clip: true
             model: treeModel
             delegate: TreeItemDelegate {
-                onProjectClicked: function(projectId) {
-                    tree.selectedProjectId = projectId
-                    sidebar.projectSelected(projectId)
-                }
-                onAddCustomRequested: function(folderPath) {
-                    sidebar.addCustomRequested(folderPath)
+                onFolderClicked: function(folderPath) {
+                    tree.selectedFolderPath = folderPath
+                    sidebar.folderSelected(folderPath)
                 }
             }
 
@@ -295,10 +292,16 @@ Rectangle {
             // covers the whole sidebar
             columnWidthProvider: function(column) { return tree.width }
 
-            // Selected project id (path + "/" + manifest).
+            // Selected folder path (entries share their parent's path,
+            // so only entry rows ever match it for highlight).
             // Expansion itself is owned by TreeView (toggleExpanded).
-            property string selectedProjectId: ""
+            property string selectedFolderPath: ""
         }
+    }
+
+    // Drops the highlight, e.g. when leaving the folder page.
+    function clearFolderSelection() {
+        tree.selectedFolderPath = ""
     }
 
     // Footer: MCP dialog shortcut, add projects, update check
@@ -334,14 +337,25 @@ Rectangle {
         }
 
         IconButton {
+            id: settingsButton
+            objectName: "settingsButton"
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            iconSource: iconBaseUrl + (Theme.isDark ? "cog-dark.png" : "cog.png")
+            tooltipText: qsTr("Settings")
+            onClicked: sidebar.settingsRequested()
+        }
+
+        IconButton {
             id: updateButton
             objectName: "updateButton"
             // macOS uses the native app menu (trun → Check for Updates…);
             // the footer button remains for platforms without one.
             visible: Qt.platform.os !== "osx"
-            anchors.right: parent.right
+            anchors.right: settingsButton.left
+            anchors.rightMargin: Theme.spacingXs
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: iconBaseUrl + (Theme.isDark ? "cog-dark.png" : "cog.png")
+            iconSource: iconBaseUrl + (Theme.isDark ? "rotate-cw-dark.png" : "rotate-cw.png")
             tooltipText: updater.updateAvailable ? qsTr("Update available") : qsTr("Check for updates")
             active: updater.updateAvailable
             onClicked: sidebar.updateCheckRequested()

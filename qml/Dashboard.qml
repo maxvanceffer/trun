@@ -46,8 +46,38 @@ Rectangle {
 
     readonly property string cpuText: (stats && stats.cpuUsage >= 0)
         ? Math.round(stats.cpuUsage * 100) + "%" : "—"
+    // CPU topology as the big value, with a static caption below:
+    // the ring already graphs the usage percentage, so repeating it as
+    // text would duplicate the graph.
+    readonly property string cpuValueText: {
+        if (!stats) return cpuText
+        var cores = stats.cpuCores || 0
+        var threads = stats.cpuThreads || 0
+        if (cores > 0 && threads > 0) return qsTr("%1 core / %2 threads").arg(cores).arg(threads)
+        if (threads > 0) return qsTr("%1 threads").arg(threads)
+        if (cores > 0) return qsTr("%1 core").arg(cores)
+        return cpuText
+    }
+    readonly property string cpuSubText: {
+        if (!stats) return qsTr("usage")
+        var cores = stats.cpuCores || 0
+        var threads = stats.cpuThreads || 0
+        if (cores > 0 || threads > 0) return qsTr("cpu information")
+        return qsTr("usage")
+    }
     readonly property string ramUsedText: stats ? kbToText(stats.memoryUsedKb) : "—"
     readonly property string ramTotalText: stats ? kbToText(stats.memoryTotalKb) : "—"
+    // Same style as the CPU card: used/total on top, static caption below.
+    readonly property string ramValueText: {
+        if (!stats || stats.memoryUsedKb < 0 || stats.memoryTotalKb <= 0)
+            return ramUsedText
+        return kbToText(stats.memoryUsedKb) + " / " + kbToText(stats.memoryTotalKb)
+    }
+    readonly property string ramSubText: {
+        if (!stats || stats.memoryTotalKb <= 0)
+            return qsTr("of ") + ramTotalText
+        return qsTr("ram information")
+    }
 
     function kbToText(kb) {
         if (kb === undefined || kb < 0) return "—"
@@ -122,8 +152,15 @@ Rectangle {
         return h > 0 ? h + ":" + mm + ":" + ss : m + ":" + ss
     }
 
-    function openActivity(projectId, commandId) {
-        if (projectId && projectId !== "")
+    // Manifest file from a project id ("<path>/<manifest>"), "" when unknown.
+    // Activity cards (recent, running) show the manifest icon from it.
+    function manifestOf(projectId) {
+        var p = (projectId || "").toString()
+        var i = p.lastIndexOf("/")
+        return i < 0 ? "" : p.slice(i + 1)
+    }
+
+    function openActivity(projectId, commandId) {        if (projectId && projectId !== "")
             projectService.selectProject(projectId)
         openDetail(commandId)
     }
@@ -198,14 +235,33 @@ Rectangle {
     }
 
     // Command descriptor for a full run key (bare ids repeat across projects).
+    // Searches the active project first, then every manifest project of the
+    // active folder (folder page cards belong to many projects at once).
+    // Returns {command, manifest}; both empty when unknown.
     function commandByKey(key) {
-        var bare = key.slice(key.lastIndexOf("|") + 1)
+        var sep = key.lastIndexOf("|")
+        var pid = sep < 0 ? "" : key.slice(0, sep)
+        var bare = key.slice(sep + 1)
         var cmds = projectService.activeProjectCommands
         for (var i = 0; i < cmds.length; ++i) {
-            if (cmds[i] && cmds[i].id === bare)
-                return cmds[i]
+            if (cmds[i] && cmds[i].id === bare
+                && (pid === "" || (projectService.activeProject.id || "") === pid))
+                return { command: cmds[i],
+                         manifest: (projectService.activeProject
+                                    && projectService.activeProject.manifest) || "" }
         }
-        return {}
+        var folder = projectService.activeFolderProjects
+        for (var f = 0; f < folder.length; ++f) {
+            var p = folder[f]
+            if (!p || (pid !== "" && p.id !== pid))
+                continue
+            var list = p.commands || []
+            for (var j = 0; j < list.length; ++j) {
+                if (list[j] && list[j].id === bare)
+                    return { command: list[j], manifest: p.manifest || "" }
+            }
+        }
+        return { command: {}, manifest: "" }
     }
 
     // Tool-aware busy-port detection: the owning plugin (vite, symfony, ...)
@@ -214,10 +270,9 @@ Rectangle {
     // port and its occupant are known, otherwise parks a pending report.
     function checkBusyLine(cmdId, label, line) {
         var plain = ToolPlugins.stripSgr(line)
-        var cmd = dashboard.commandByKey(dashboard.fullKey(cmdId))
-        var manifest = (projectService.activeProject
-                        && projectService.activeProject.manifest) || ""
-        var m = ToolPlugins.matchLine(cmd.detectedProgram || "", manifest, plain)
+        var found = dashboard.commandByKey(dashboard.fullKey(cmdId))
+        var cmd = found.command || {}
+        var m = ToolPlugins.matchLine(cmd.detectedProgram || "", found.manifest || "", plain)
         if (!m.hit.matched)
             return
         var plugin = m.plugin
@@ -319,39 +374,55 @@ Rectangle {
             + (svc !== "" ? "it" : "the dependency") + " and run again"
     }
 
-    // ─── Pages: root Dashboard / project commands / command detail ───
+    // ─── Pages: root Dashboard / folder manifests / command detail ───
     property string activePage: "dashboard"
     property string detailReturnPage: "dashboard"
+
+    signal addCustomRequested(string folderPath)
 
     readonly property var activeProject: projectService.activeProject
     readonly property bool hasProject: activeProject !== undefined && activeProject !== null
                                        && activeProject.id !== undefined
                                        && activeProject.id !== ""
-    // Project crumbs only make sense inside the project context itself:
-    // on the dashboard root they linger after "Dashboard" was clicked and
-    // wrongly suggest we are still inside the project.
-    readonly property bool showProjectCrumbs: hasProject
-        && (activePage === "project" || activePage === "detail")
-    readonly property string crumbProject: hasProject ? baseName(activeProject.project_path) : ""
-    // Manifest name (package.json/composer.json "name") or the file name.
-    readonly property string crumbConfig: hasProject
-        ? ((activeProject.name !== undefined && activeProject.name !== "")
-           ? activeProject.name : (activeProject.manifest || ""))
-        : ""
 
-    function baseName(p) {
-        if (p === undefined || p === null || p === "") return ""
-        return p.substring(p.lastIndexOf("/") + 1)
+    // Folder crumbs for the current context: the open folder itself, or
+    // the folder owning the open detail command.
+    readonly property string detailProjectId: {
+        var k = dashboard.detailCommandId || ""
+        var i = k.lastIndexOf("|")
+        return i < 0 ? k : k.slice(0, i)
     }
+    readonly property string detailFolderPath: {
+        var p = dashboard.detailProjectId
+        var i = p.lastIndexOf("/")
+        return i < 0 ? p : p.slice(0, i)
+    }
+    readonly property string detailManifest: {
+        var p = dashboard.detailProjectId
+        return p.slice(p.lastIndexOf("/") + 1)
+    }
+    readonly property string detailLabel: {
+        var found = dashboard.commandByKey(dashboard.detailCommandId)
+        return ((found && found.command && found.command.label) || "").toString()
+    }
+    readonly property string contextFolderPath: dashboard.activePage === "detail"
+        ? dashboard.detailFolderPath
+        : ((projectService.activeFolder && projectService.activeFolder.path) || "")
+    readonly property var folderSegments: dashboard.contextFolderPath !== ""
+        ? projectService.folderCrumbs(dashboard.contextFolderPath) : []
+    readonly property bool showFolderCrumbs: dashboard.folderSegments.length > 0
+        && (activePage === "folder" || activePage === "detail")
 
     function goHome() {
         dashboard.closeDetail()
         dashboard.activePage = "dashboard"
     }
 
-    function openProject() {
+    function openFolder(folderPath) {
         dashboard.closeDetail()
-        dashboard.activePage = "project"
+        if (folderPath !== undefined && folderPath !== "")
+            projectService.selectFolder(folderPath)
+        dashboard.activePage = "folder"
     }
 
     function openDatabases() {
@@ -383,12 +454,21 @@ Rectangle {
     // Controls inside the agent title-bar strip that must stay clickable.
     // Null-guarded: qwindowkit ASSERT-aborts the whole app on null.
     function markHitTest(agent) {
-        var controls = [crumbDashboardLabel, crumbProjectLabel, crumbConfigLabel]
-        for (var i = 0; i < controls.length; ++i) {
-            if (controls[i])
-                agent.setHitTestVisible(controls[i], true)
+        var controls = [crumbDashboardLabel]
+        for (var i = 0; i < segRepeater.count; ++i) {
+            var seg = segRepeater.itemAt(i)
+            if (seg)
+                controls.push(seg)
             else
-                console.warn("markHitTest: breadcrumb control " + i + " is null")
+                console.warn("markHitTest: breadcrumb segment " + i + " is null")
+        }
+        if (crumbManifestLabel && crumbManifestLabel.visible)
+            controls.push(crumbManifestLabel)
+        for (var j = 0; j < controls.length; ++j) {
+            if (controls[j])
+                agent.setHitTestVisible(controls[j], true)
+            else
+                console.warn("markHitTest: breadcrumb control " + j + " is null")
         }
     }
 
@@ -441,7 +521,7 @@ Rectangle {
 
     function openDetail(cmdId) {
         if (cmdId === "") return
-        dashboard.detailReturnPage = dashboard.activePage === "project" ? "project" : "dashboard"
+        dashboard.detailReturnPage = dashboard.activePage === "folder" ? "folder" : "dashboard"
         dashboard.detailCommandId = fullKey(cmdId)
         selectCommand(cmdId)
         dashboard.activePage = "detail"
@@ -570,17 +650,50 @@ Rectangle {
                     font.pixelSize: Theme.fontSizeLg
                 }
 
+                // Folder crumbs (folder page and detail alike). Segments
+                // navigate back to their folder; the manifest/command tail
+                // on detail pages names the current location.
+                Repeater {
+                    id: segRepeater
+                    model: dashboard.showFolderCrumbs ? dashboard.folderSegments : []
+
+                    delegate: RowLayout {
+                        required property var modelData
+                        required property int index
+                        spacing: Theme.spacingXs
+
+                        Label {
+                            text: "/"
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontSizeLg
+                        }
+
+                        Label {
+                            text: modelData.name || ""
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontSizeLg
+                            elide: Text.ElideRight
+
+                            MouseArea {
+                                anchors.fill: parent
+                                cursorShape: Qt.PointingHandCursor
+                                onClicked: dashboard.openFolder(modelData.path || "")
+                            }
+                        }
+                    }
+                }
+
                 Label {
-                    visible: dashboard.showProjectCrumbs
+                    visible: dashboard.activePage === "detail" && dashboard.detailManifest !== ""
                     text: "/"
                     color: Theme.textMuted
                     font.pixelSize: Theme.fontSizeLg
                 }
 
                 Label {
-                    id: crumbProjectLabel
-                    visible: dashboard.showProjectCrumbs
-                    text: dashboard.crumbProject
+                    id: crumbManifestLabel
+                    visible: dashboard.activePage === "detail" && dashboard.detailManifest !== ""
+                    text: dashboard.detailManifest
                     color: Theme.textMuted
                     font.pixelSize: Theme.fontSizeLg
                     elide: Text.ElideRight
@@ -588,30 +701,24 @@ Rectangle {
                     MouseArea {
                         anchors.fill: parent
                         cursorShape: Qt.PointingHandCursor
-                        onClicked: dashboard.openProject()
+                        onClicked: dashboard.openFolder(dashboard.detailFolderPath)
                     }
                 }
 
                 Label {
-                    visible: dashboard.showProjectCrumbs && dashboard.crumbConfig !== ""
+                    visible: dashboard.activePage === "detail" && dashboard.detailLabel !== ""
                     text: "/"
                     color: Theme.textMuted
                     font.pixelSize: Theme.fontSizeLg
                 }
 
                 Label {
-                    id: crumbConfigLabel
-                    visible: dashboard.showProjectCrumbs && dashboard.crumbConfig !== ""
-                    text: dashboard.crumbConfig
-                    color: Theme.textMuted
+                    id: crumbCommandLabel
+                    visible: dashboard.activePage === "detail" && dashboard.detailLabel !== ""
+                    text: dashboard.detailLabel
+                    color: Theme.textPrimary
                     font.pixelSize: Theme.fontSizeLg
                     elide: Text.ElideRight
-
-                    MouseArea {
-                        anchors.fill: parent
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: dashboard.openProject()
-                    }
                 }
 
                 Item { Layout.fillWidth: true }
@@ -666,8 +773,8 @@ Rectangle {
             StatCard {
                 objectName: "cpuStatCard"
                 title: qsTr("CPU")
-                value: dashboard.cpuText
-                sub: qsTr("usage")
+                value: dashboard.cpuValueText
+                sub: dashboard.cpuSubText
                 ringFraction: dashboard.stats ? dashboard.stats.cpuUsage : -1
                 ringColor: Theme.primary
                 Layout.fillWidth: true
@@ -676,31 +783,32 @@ Rectangle {
             StatCard {
                 objectName: "ramStatCard"
                 title: qsTr("RAM")
-                value: dashboard.ramUsedText
-                sub: qsTr("of ") + dashboard.ramTotalText
+                value: dashboard.ramValueText
+                sub: dashboard.ramSubText
                 ringFraction: dashboard.stats ? dashboard.stats.memoryUsage : -1
                 ringColor: Theme.primary
                 Layout.fillWidth: true
             }
         }
 
-        // Update alert capsule between stats and activity. Collapses to
-        // zero height when no update is available (layout unchanged).
+        // Update alert between stats and activity: full width, same side
+        // margins as the cards and equal spacing above and below.
+        // Collapses to zero height when no update is available.
         Item {
             id: updateAlertSlot
             objectName: "updateAlertSlot"
             anchors.top: systemStatsRow.bottom
+            anchors.topMargin: Theme.spacingMd
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.leftMargin: Theme.spacingLg
             anchors.rightMargin: Theme.spacingLg
-            height: dashboard.hasUpdate ? 44 + Theme.spacingMd : 0
+            height: dashboard.hasUpdate ? 44 : 0
             visible: dashboard.hasUpdate
             clip: true
 
             UpdateAlert {
-                anchors.horizontalCenter: parent.horizontalCenter
-                anchors.bottom: parent.bottom
+                anchors.fill: parent
                 messageText: qsTr("Update to v%1 available").arg(dashboard.updateVersion)
                 actionText: qsTr("Update")
                 iconSource: iconBaseUrl + (Theme.isDark ? "rotate-cw-dark.png" : "rotate-cw.png")
@@ -713,7 +821,7 @@ Rectangle {
             id: activityView
             objectName: "activityView"
             anchors.top: updateAlertSlot.bottom
-            anchors.topMargin: Theme.spacingXl
+            anchors.topMargin: Theme.spacingMd
             anchors.left: parent.left
             anchors.right: parent.right
             anchors.bottom: parent.bottom
@@ -769,6 +877,7 @@ Rectangle {
                             delegate: Rectangle {
                                 id: recentCard
                                 required property var modelData
+                                readonly property string manifest: dashboard.manifestOf(modelData.projectId)
                                 width: 200
                                 height: 68
                                 radius: Theme.radiusMd
@@ -790,13 +899,32 @@ Rectangle {
                                     anchors.margins: Theme.spacingSm
                                     spacing: 2
 
-                                    Label {
+                                    RowLayout {
                                         width: parent.width
-                                        text: recentCard.modelData.label
-                                        color: Theme.textPrimary
-                                        font.pixelSize: Theme.fontSizeMd
-                                        font.bold: true
-                                        elide: Text.ElideRight
+                                        spacing: Theme.spacingXs
+
+                                        Image {
+                                            Layout.preferredWidth: Math.round(
+                                                (recentCard.manifest === "composer.json" ? 24 : 11)
+                                                * ToolPlugins.manifestAspect(recentCard.manifest))
+                                            Layout.preferredHeight: recentCard.manifest === "composer.json" ? 24 : 11
+                                            Layout.alignment: Qt.AlignVCenter
+                                            source: iconBaseUrl + ToolPlugins.manifestIcon(
+                                                recentCard.manifest, Theme.isDark)
+                                            fillMode: Image.PreserveAspectFit
+                                            smooth: true
+                                        }
+
+                                        Label {
+                                            Layout.fillWidth: true
+                                            Layout.alignment: Qt.AlignVCenter
+                                            text: recentCard.modelData.label
+                                            color: Theme.textPrimary
+                                            font.pixelSize: Theme.fontSizeMd
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                            transform: Translate { y: -2 }
+                                        }
                                     }
                                     Label {
                                         width: parent.width
@@ -828,6 +956,27 @@ Rectangle {
                                     visible: dashboard.isRunningCommand(
                                         recentCard.modelData.projectId,
                                         recentCard.modelData.commandId)
+                                }
+
+                                // Hover glow outside the card (see CommandCard):
+                                // the row keeps side spacing so the ring
+                                // never touches the viewport edge.
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.margins: -3
+                                    radius: Theme.radiusMd + 3
+                                    color: "transparent"
+                                    border.color: Qt.rgba(Theme.accent.r, Theme.accent.g,
+                                                          Theme.accent.b, 0.45)
+                                    border.width: 2
+                                    opacity: recentMouse.containsMouse ? 1 : 0
+
+                                    Behavior on opacity {
+                                        NumberAnimation {
+                                            duration: 250
+                                            easing.type: Theme.easingStandard
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -879,12 +1028,28 @@ Rectangle {
                             delegate: Rectangle {
                                 id: runningCard
                                 required property var modelData
+                                readonly property string manifest: dashboard.manifestOf(modelData.projectId)
                                 width: 200
                                 height: 68
                                 radius: Theme.radiusMd
                                 color: Theme.cardBackground
                                 border.width: 1
                                 border.color: runningMouse.containsMouse ? Theme.accent : Theme.border
+
+                                // Hover glow outside the card (see CommandCard).
+                                Rectangle {
+                                    anchors.fill: parent
+                                    anchors.margins: -3
+                                    radius: Theme.radiusMd + 3
+                                    color: "transparent"
+                                    border.color: Qt.rgba(Theme.accent.r, Theme.accent.g,
+                                                          Theme.accent.b, 0.45)
+                                    border.width: 2
+                                    opacity: runningMouse.containsMouse ? 1 : 0
+                                    Behavior on opacity {
+                                        NumberAnimation { duration: Theme.animFast; easing.type: Theme.easingStandard }
+                                    }
+                                }
 
                                 MouseArea {
                                     id: runningMouse
@@ -904,13 +1069,27 @@ Rectangle {
                                         width: parent.width
                                         spacing: Theme.spacingXs
 
+                                        Image {
+                                            Layout.preferredWidth: Math.round(
+                                                (runningCard.manifest === "composer.json" ? 24 : 11)
+                                                * ToolPlugins.manifestAspect(runningCard.manifest))
+                                            Layout.preferredHeight: runningCard.manifest === "composer.json" ? 24 : 11
+                                            Layout.alignment: Qt.AlignVCenter
+                                            source: iconBaseUrl + ToolPlugins.manifestIcon(
+                                                runningCard.manifest, Theme.isDark)
+                                            fillMode: Image.PreserveAspectFit
+                                            smooth: true
+                                        }
+
                                         Label {
                                             Layout.fillWidth: true
+                                            Layout.alignment: Qt.AlignVCenter
                                             text: runningCard.modelData.label
                                             color: Theme.textPrimary
                                             font.pixelSize: Theme.fontSizeMd
                                             font.bold: true
                                             elide: Text.ElideRight
+                                            transform: Translate { y: -2 }
                                         }
 
                                         IconButton {
@@ -974,39 +1153,281 @@ Rectangle {
         }
             }
 
-            // Project page: command grid of the selected project.
+            // Folder page: manifest sections of the selected folder, each
+            // with its command cards, plus the custom-commands section.
             Item {
-                id: projectPage
-                objectName: "projectPage"
+                id: folderPage
+                objectName: "folderPage"
                 anchors.fill: parent
-                enabled: dashboard.activePage === "project"
+                enabled: dashboard.activePage === "folder"
                 visible: opacity > 0
-                opacity: dashboard.activePage === "project" ? 1 : 0
-                x: dashboard.activePage === "project" ? 0 : Theme.spacingXl
+                opacity: dashboard.activePage === "folder" ? 1 : 0
+                x: dashboard.activePage === "folder" ? 0 : Theme.spacingXl
                 Behavior on opacity { NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard } }
                 Behavior on x { NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard } }
 
-                GridLayout {
-                    id: commandsGrid
-                    anchors.top: parent.top
-                    anchors.topMargin: Theme.spacingMd
-                    anchors.left: parent.left
-                    anchors.leftMargin: Theme.spacingLg
-                    anchors.right: parent.right
-                    anchors.rightMargin: Theme.spacingLg
-                    columns: Math.max(1, Math.min(4,
-                        Math.floor((projectPage.width - 2 * Theme.spacingLg + 8) / 258)))
-                    columnSpacing: Theme.spacingSm
-                    rowSpacing: Theme.spacingSm
-                    uniformCellWidths: true
-                    uniformCellHeights: true
+                readonly property string folderPath: (projectService.activeFolder
+                    && projectService.activeFolder.path) || ""
+                // Current branch of the folder; tracks the model's
+                // refresh counter since plain calls have no tracking.
+                readonly property string folderBranch: {
+                    treeModel.gitBranchesVersion
+                    return folderPage.folderPath !== ""
+                        ? treeModel.gitBranchForPath(folderPage.folderPath) : ""
+                }
+                // Manifest projects, excluding the custom-commands pseudo-project
+                readonly property var manifestSections: {
+                    var out = []
+                    var list = projectService.activeFolderProjects
+                    for (var i = 0; i < list.length; ++i) {
+                        if (list[i] && list[i].manifest !== "custom")
+                            out.push(list[i])
+                    }
+                    return out
+                }
+                readonly property var customSection: {
+                    var list = projectService.activeFolderProjects
+                    for (var i = 0; i < list.length; ++i) {
+                        if (list[i] && list[i].manifest === "custom")
+                            return list[i]
+                    }
+                    return null
+                }
+                readonly property var customCommands: folderPage.customSection
+                    ? (folderPage.customSection.commands || []) : []
 
-                    Repeater {
-                        model: projectService.activeProjectCommands
-                        delegate: CommandCard {
+                ScrollView {
+                    id: folderScroll
+                    anchors.fill: parent
+                    anchors.leftMargin: Theme.spacingLg
+                    anchors.rightMargin: Theme.spacingLg
+                    anchors.topMargin: Theme.spacingMd
+                    anchors.bottomMargin: Theme.spacingLg
+                    contentWidth: availableWidth
+                    ScrollBar.horizontal.policy: ScrollBar.AlwaysOff
+
+                    ColumnLayout {
+                        width: folderScroll.availableWidth
+                        spacing: Theme.spacingXl
+
+                        // Current git branch of the folder, when known.
+                        StatCard {
+                            visible: Settings.showGitBranch && folderPage.folderBranch !== ""
+                            title: qsTr("Git branch")
+                            value: folderPage.folderBranch
+                            sub: qsTr("Current branch")
+                        }
+
+                        Repeater {
+                            model: folderPage.manifestSections
+
+                            delegate: ColumnLayout {
+                                required property var modelData
+                                property string sectionId: modelData.id || ""
+                                property var sectionCommands: modelData.commands || []
+                                spacing: Theme.spacingSm
+                                Layout.fillWidth: true
+                                // Inner padding: hover glow rings stick out 3px,
+                                // keep them off the scroll viewport edge.
+                                Layout.leftMargin: 4
+                                Layout.rightMargin: 4
+
+                                // Section header: [icon] name ——— count
+                                RowLayout {
+                                    spacing: Theme.spacingSm
+                                    Layout.fillWidth: true
+
+                                    Image {
+                                        // Sized by height from the painted aspect:
+                                        // the icon runs slightly above and below
+                                        // the text, which stays centered in it.
+                                        Layout.preferredWidth: Math.round(
+                                            ToolPlugins.manifestHeaderHeight(modelData.manifest || "")
+                                            * ToolPlugins.manifestAspect(modelData.manifest || ""))
+                                        Layout.preferredHeight: ToolPlugins.manifestHeaderHeight(
+                                            modelData.manifest || "")
+                                        Layout.alignment: Qt.AlignVCenter
+                                        source: iconBaseUrl + ToolPlugins.manifestIcon(
+                                            modelData.manifest || "", Theme.isDark)
+                                        fillMode: Image.PreserveAspectFit
+                                        smooth: true
+                                    }
+
+                                    Label {
+                                        text: modelData.name || modelData.manifest || ""
+                                        color: Theme.textPrimary
+                                        font.pixelSize: Theme.fontSizeMd
+                                        font.bold: true
+                                        elide: Text.ElideRight
+                                        Layout.alignment: Qt.AlignVCenter
+                                        // Optical centering vs the icon (integer
+                                        // only: fractional y blurs the text)
+                                        transform: Translate { y: -2 }
+                                    }
+
+                                    Rectangle {
+                                        Layout.fillWidth: true
+                                        Layout.preferredHeight: 1
+                                        Layout.alignment: Qt.AlignVCenter
+                                        color: Theme.border
+                                    }
+
+                                    Label {
+                                        text: String(sectionCommands.length)
+                                        color: Theme.textMuted
+                                        font.pixelSize: Theme.fontSizeSm
+                                        Layout.alignment: Qt.AlignVCenter
+                                    }
+                                }
+
+                                GridLayout {
+                                    Layout.fillWidth: true
+                                    columns: Math.max(1, Math.min(4,
+                                        Math.floor((folderPage.width - 2 * Theme.spacingLg + 8) / 258)))
+                                    columnSpacing: Theme.spacingSm
+                                    rowSpacing: Theme.spacingSm
+                                    uniformCellWidths: true
+                                    uniformCellHeights: true
+
+                                    Repeater {
+                                        model: sectionCommands
+
+                                        delegate: CommandCard {
+                                            required property var modelData
+                                            Layout.fillWidth: true
+                                            projectId: sectionId
+                                            command: modelData
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        // Custom commands: always present, splash when empty
+                        ColumnLayout {
+                            spacing: Theme.spacingSm
                             Layout.fillWidth: true
-                            command: modelData
-                            selected: dashboard.fullKey(modelData.id) === dashboard.selectedCommandId
+                            Layout.leftMargin: 4
+                            Layout.rightMargin: 4
+
+                            RowLayout {
+                                spacing: Theme.spacingSm
+                                Layout.fillWidth: true
+
+                                Image {
+                                    Layout.preferredWidth: Math.round(
+                                        ToolPlugins.manifestHeaderHeight("custom")
+                                        * ToolPlugins.manifestAspect("custom"))
+                                    Layout.preferredHeight: ToolPlugins.manifestHeaderHeight("custom")
+                                    Layout.alignment: Qt.AlignVCenter
+                                    source: iconBaseUrl + ToolPlugins.manifestIcon("custom", Theme.isDark)
+                                    fillMode: Image.PreserveAspectFit
+                                    smooth: true
+                                }
+
+                                Label {
+                                    text: qsTr("Custom commands")
+                                    color: Theme.textPrimary
+                                    font.pixelSize: Theme.fontSizeMd
+                                    font.bold: true
+                                    elide: Text.ElideRight
+                                    Layout.alignment: Qt.AlignVCenter
+                                    transform: Translate { y: -2 }
+                                }
+
+                                Rectangle {
+                                    Layout.fillWidth: true
+                                    Layout.preferredHeight: 1
+                                    Layout.alignment: Qt.AlignVCenter
+                                    color: Theme.border
+                                }
+
+                                Label {
+                                    text: String(folderPage.customCommands.length)
+                                    color: Theme.textMuted
+                                    font.pixelSize: Theme.fontSizeSm
+                                    Layout.alignment: Qt.AlignVCenter
+                                }
+                            }
+
+                            GridLayout {
+                                visible: folderPage.customCommands.length > 0
+                                Layout.fillWidth: true
+                                columns: Math.max(1, Math.min(4,
+                                    Math.floor((folderPage.width - 2 * Theme.spacingLg + 8) / 258)))
+                                columnSpacing: Theme.spacingSm
+                                rowSpacing: Theme.spacingSm
+                                uniformCellWidths: true
+                                uniformCellHeights: true
+
+                                Repeater {
+                                    model: folderPage.customSection
+                                        ? (folderPage.customSection.commands || []) : []
+                                    delegate: CommandCard {
+                                        required property var modelData
+                                        Layout.fillWidth: true
+                                        projectId: folderPage.customSection
+                                            ? (folderPage.customSection.id || "") : ""
+                                        command: modelData
+                                    }
+                                }
+                            }
+
+                            // Splash with the Add button when nothing custom yet
+                            Column {
+                                visible: folderPage.customCommands.length === 0
+                                Layout.fillWidth: true
+                                Layout.topMargin: 18
+                                spacing: Theme.spacingSm
+
+                                Label {
+                                    width: parent.width
+                                    text: qsTr("No custom commands yet")
+                                    color: Theme.textPrimary
+                                    font.pixelSize: Theme.fontSizeMd
+                                    font.bold: true
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+
+                                Label {
+                                    width: parent.width
+                                    text: qsTr("Add one-off launchers for this folder — any executable, any args.")
+                                    color: Theme.textMuted
+                                    font.pixelSize: Theme.fontSizeSm
+                                    wrapMode: Text.WordWrap
+                                    horizontalAlignment: Text.AlignHCenter
+                                }
+
+                                Button {
+                                    anchors.horizontalCenter: parent.horizontalCenter
+                                    width: 200
+                                    height: 34
+                                    font.pixelSize: 12
+
+                                    background: Rectangle {
+                                        radius: 6
+                                        color: Theme.primary
+                                    }
+
+                                    contentItem: Label {
+                                        text: qsTr("Add custom command")
+                                        color: Theme.primaryForeground
+                                        font.pixelSize: 12
+                                        font.bold: true
+                                        horizontalAlignment: Text.AlignHCenter
+                                        verticalAlignment: Text.AlignVCenter
+                                    }
+
+                                    onClicked: dashboard.addCustomRequested(folderPage.folderPath)
+                                }
+                            }
+
+                            // Bottom breathing room: last-row glow rings stick
+                            // out 3px below the content.
+                            Item {
+                                Layout.fillWidth: true
+                                Layout.preferredHeight: 4
+                            }
                         }
                     }
                 }

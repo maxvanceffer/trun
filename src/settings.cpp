@@ -19,8 +19,14 @@ QVariant Settings::get(const QString &key, const QVariant &defaultValue) const
 
 void Settings::set(const QString &key, const QVariant &value)
 {
+    const bool previousBranch = showGitBranch();
+    const bool previousScope = gitBranchTopOnly();
     m_settings.setValue(key, value);
     m_settings.sync();
+    if (previousBranch != showGitBranch())
+        emit showGitBranchChanged();
+    if (previousScope != gitBranchTopOnly())
+        emit gitBranchTopOnlyChanged();
 }
 
 bool Settings::has(const QString &key) const
@@ -30,8 +36,40 @@ bool Settings::has(const QString &key) const
 
 void Settings::remove(const QString &key)
 {
+    const bool previousBranch = showGitBranch();
+    const bool previousScope = gitBranchTopOnly();
     m_settings.remove(key);
     m_settings.sync();
+    if (previousBranch != showGitBranch())
+        emit showGitBranchChanged();
+    if (previousScope != gitBranchTopOnly())
+        emit gitBranchTopOnlyChanged();
+}
+
+bool Settings::showGitBranch() const
+{
+    return m_settings.value(QStringLiteral("showGitBranch"), true).toBool();
+}
+
+void Settings::setShowGitBranch(bool show)
+{
+    if (show != showGitBranch()) {
+        set(QStringLiteral("showGitBranch"), show);
+        emit showGitBranchChanged();
+    }
+}
+
+bool Settings::gitBranchTopOnly() const
+{
+    return m_settings.value(QStringLiteral("gitBranchTopOnly"), true).toBool();
+}
+
+void Settings::setGitBranchTopOnly(bool topOnly)
+{
+    if (topOnly != gitBranchTopOnly()) {
+        set(QStringLiteral("gitBranchTopOnly"), topOnly);
+        emit gitBranchTopOnlyChanged();
+    }
 }
 
 QString Settings::rootFolder() const
