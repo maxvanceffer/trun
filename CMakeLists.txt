@@ -72,6 +72,8 @@ qt_add_qml_module(trun-app
         qml/IconButton.qml
         qml/StatCard.qml
         qml/DetailPage.qml
+        qml/ConsoleFormat.js
+        qml/ToolPlugins.js
         qml/ProgressRing.qml
         qml/RunConfigDialog.qml
         qml/McpSetupDialog.qml

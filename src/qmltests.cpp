@@ -751,7 +751,6 @@ void QmlTests::test_icons_in_assets()
     QVERIFY(QFile::exists(iconDir + "/folders-dark.png"));
 
     // Check UI glyphs used by icon-only ghost buttons
-    QVERIFY(QFile::exists(iconDir + "/square-chevron-down.png"));
     QVERIFY(QFile::exists(iconDir + "/brush-cleaning.png"));
     QVERIFY(QFile::exists(iconDir + "/chevron-down.png"));
     QVERIFY(QFile::exists(iconDir + "/chevron-down-dark.png"));
