@@ -729,6 +729,20 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
             }
 
+            // Git branch tag (mirrors sidebar UiTag)
+            UiTag {
+                id: branchTag
+                visible: Settings.showGitBranch
+                    && projectService.activeFolder.path !== ""
+                    && treeModel.gitBranchForPath(projectService.activeFolder.path) !== ""
+                label: treeModel.gitBranchForPath(projectService.activeFolder.path)
+                color: "primary"
+                variant: "subtle"
+                size: "sm"
+                iconSource: iconBaseUrl + "git-branch.png"
+                Layout.alignment: Qt.AlignVCenter
+            }
+
             UiInput {
                 id: searchField
                 Layout.fillWidth: true

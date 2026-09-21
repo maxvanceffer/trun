@@ -1210,14 +1210,6 @@ Rectangle {
                         width: folderScroll.availableWidth
                         spacing: Theme.spacingXl
 
-                        // Current git branch of the folder, when known.
-                        StatCard {
-                            visible: Settings.showGitBranch && folderPage.folderBranch !== ""
-                            title: qsTr("Git branch")
-                            value: folderPage.folderBranch
-                            sub: qsTr("Current branch")
-                        }
-
                         Repeater {
                             model: folderPage.manifestSections
 
