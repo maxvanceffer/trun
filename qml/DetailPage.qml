@@ -732,10 +732,13 @@ Item {
             // Git branch tag (mirrors sidebar UiTag)
             UiTag {
                 id: branchTag
+                readonly property string folderPath: projectService.activeFolder.path !== ""
+                    ? projectService.activeFolder.path
+                    : (projectService.activeProject.project_path || "")
                 visible: Settings.showGitBranch
-                    && projectService.activeFolder.path !== ""
-                    && treeModel.gitBranchForPath(projectService.activeFolder.path) !== ""
-                label: treeModel.gitBranchForPath(projectService.activeFolder.path)
+                    && branchTag.folderPath !== ""
+                    && treeModel.gitBranchForPath(branchTag.folderPath) !== ""
+                label: treeModel.gitBranchForPath(branchTag.folderPath)
                 color: "primary"
                 variant: "subtle"
                 size: "sm"
