@@ -103,11 +103,19 @@ Item {
                 fillMode: Image.PreserveAspectFit
             }
 
-            Label {
+            // Trigger chevron when no chevronSource is supplied: the shared
+            // chevron icon downscaled from its 64px PNG source, drawn the
+            // same way the project tree draws it (small box, 16px decode).
+            Image {
                 visible: root.chevronSource === ""
-                text: "▾"
-                color: Theme.textMuted
-                font.pixelSize: 11
+                Layout.preferredWidth: Theme.iconSm
+                Layout.preferredHeight: Theme.iconSm
+                Layout.alignment: Qt.AlignVCenter
+                source: Theme.icon("chevron-down")
+                sourceSize.width: Theme.iconSm
+                sourceSize.height: Theme.iconSm
+                fillMode: Image.PreserveAspectFit
+                smooth: true
             }
         }
     }

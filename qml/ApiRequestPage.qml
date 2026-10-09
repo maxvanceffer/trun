@@ -324,36 +324,29 @@ Item {
                     onActivated: function (index) { reqRoot.selectEnv(index) }
                 }
 
-                // Send ⇄ Cancel: an in-flight request locks the bar and
-                // offers Cancel; R6 wires the actual network slice.
+                // Send ⇄ Cancel: a running request turns the spinner on inside the
+                // Send button (Nuxt `loading` — a loading button is disabled,
+                // so Cancel is a separate control beside it); R6 wires the
+                // actual network slice.
                 UiButton {
                     objectName: "apiSendButton"
                     Layout.alignment: Qt.AlignVCenter
-                    visible: !reqRoot.sending
                     label: qsTr("Send")
+                    loading: reqRoot.sending
                     color: "primary"
                     variant: "solid"
                     size: "md"
                     onClicked: reqRoot.startSend()
                 }
-                RowLayout {
+                UiButton {
+                    objectName: "apiCancelButton"
                     Layout.alignment: Qt.AlignVCenter
                     visible: reqRoot.sending
-                    spacing: Theme.spacingSm
-                    Spinner {
-                        Layout.preferredWidth: 14
-                        Layout.preferredHeight: 14
-                        color: Theme.textDimmed
-                        running: true
-                    }
-                    UiButton {
-                        objectName: "apiCancelButton"
-                        label: qsTr("Cancel")
-                        color: "neutral"
-                        variant: "outline"
-                        size: "md"
-                        onClicked: reqRoot.cancelSend()
-                    }
+                    label: qsTr("Cancel")
+                    color: "neutral"
+                    variant: "outline"
+                    size: "md"
+                    onClicked: reqRoot.cancelSend()
                 }
             }
 

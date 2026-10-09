@@ -31,6 +31,9 @@ Control {
     property url leadingIconSource
     property url trailingIconSource
     property bool loading: false
+    // Nuxt's `trailing`: the icon (and the loading spinner, see below) sits
+    // on the right side. `loading` alone puts the spinner on the left.
+    property bool trailing: false
     property bool block: false
     property bool square: false
 
@@ -39,6 +42,13 @@ Control {
     readonly property bool hasLabel: label !== ""
     readonly property bool hasLeading: leadingIconSource.toString() !== ""
     readonly property bool hasTrailing: trailingIconSource.toString() !== ""
+
+    // Button.vue + useComponentIcons: `loading` replaces the leading icon
+    // with a spinner (left); `trailing` moves it to the right side. A
+    // loading button is disabled (button.ts: disabled: props.disabled ||
+    // isLoading) — offering a cancel is the caller's job.
+    readonly property bool loadingLeft: root.loading && !root.trailing
+    readonly property bool loadingRight: root.loading && root.trailing
 
     // button.ts: square: props.square || (!slots.default && !props.label)
     readonly property bool isSquare: square || !hasLabel
@@ -223,8 +233,10 @@ Control {
             Layout.fillWidth: true
         }
 
+        // Leading spinner slot (Nuxt `loading` default side: replaces the
+        // leading icon).
         Loader {
-            active: root.loading
+            active: root.loadingLeft
             visible: active
             Layout.preferredWidth: active ? root.iconPx : 0
             Layout.preferredHeight: active ? root.iconPx : 0
@@ -237,7 +249,7 @@ Control {
         }
 
         Image {
-            visible: root.hasLeading && !root.loading
+            visible: root.hasLeading && !root.loadingLeft
             Layout.preferredWidth: visible ? root.iconPx : 0
             Layout.preferredHeight: root.iconPx
             Layout.alignment: Qt.AlignVCenter
@@ -265,8 +277,23 @@ Control {
             Layout.fillWidth: true // trailingIcon: ms-auto
         }
 
+        // Trailing side: the icon, or the loading spinner when `trailing`
+        // moved it here (Nuxt useComponentIcons).
+        Loader {
+            active: root.loadingRight
+            visible: active
+            Layout.preferredWidth: active ? root.iconPx : 0
+            Layout.preferredHeight: active ? root.iconPx : 0
+            Layout.alignment: Qt.AlignVCenter
+            sourceComponent: Spinner {
+                width: root.iconPx
+                height: root.iconPx
+                color: root.foreground
+            }
+        }
+
         Image {
-            visible: root.hasTrailing
+            visible: root.hasTrailing && !root.loadingRight
             Layout.preferredWidth: visible ? root.iconPx : 0
             Layout.preferredHeight: root.iconPx
             Layout.alignment: Qt.AlignVCenter

@@ -2277,12 +2277,14 @@ void QmlTests::test_api_request_urlbar()
     QCOMPARE(working.value(QStringLiteral("url")).toString(),
              QStringLiteral("{{baseUrl}}/api/{{token}}/campaigns/live"));
 
-    // Send ⇄ Cancel (UI stub): in flight the bar locks and Cancel replaces
-    // Send; cancel restores everything.
+    // Send ⇄ Cancel (UI stub): a Nuxt loading button stays visible with the
+    // spinner inside it and is disabled; Cancel appears beside it; fields
+    // lock. Cancel restores everything.
     QVERIFY(QMetaObject::invokeMethod(pane, "startSend"));
     QTest::qWait(20);
     QCOMPARE(pane->property("sending").toBool(), true);
-    QCOMPARE(sendBtn->property("visible").toBool(), false);
+    QCOMPARE(sendBtn->property("loading").toBool(), true);
+    QCOMPARE(sendBtn->property("visible").toBool(), true);
     QCOMPARE(cancelBtn->property("visible").toBool(), true);
     QCOMPARE(urlField->property("enabled").toBool(), false);
     QCOMPARE(methodSelect->property("enabled").toBool(), false);
@@ -2290,7 +2292,8 @@ void QmlTests::test_api_request_urlbar()
     QVERIFY(QMetaObject::invokeMethod(pane, "cancelSend"));
     QTest::qWait(20);
     QCOMPARE(pane->property("sending").toBool(), false);
-    QCOMPARE(sendBtn->property("visible").toBool(), true);
+    QCOMPARE(sendBtn->property("loading").toBool(), false);
+    QCOMPARE(cancelBtn->property("visible").toBool(), false);
     QCOMPARE(urlField->property("enabled").toBool(), true);
 
     delete obj;
