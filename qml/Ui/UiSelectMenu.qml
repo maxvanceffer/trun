@@ -98,22 +98,27 @@ Item {
                 Layout.preferredHeight: Theme.iconSm
                 visible: root.chevronSource !== ""
                 source: root.chevronSource
-                sourceSize.width: Theme.iconSm
-                sourceSize.height: Theme.iconSm
+                // 2× decode (64px art → 32px texture in a 16px box): the
+                // sharp-icon convention of the tree's iconImage — a 16px
+                // texture is stretched to 32 physical px on Retina and
+                // reads blurry.
+                sourceSize.width: Theme.iconSm * 2
+                sourceSize.height: Theme.iconSm * 2
                 fillMode: Image.PreserveAspectFit
             }
 
             // Trigger chevron when no chevronSource is supplied: the shared
             // chevron icon downscaled from its 64px PNG source, drawn the
-            // same way the project tree draws it (small box, 16px decode).
+            // same way the project tree draws it, with the 2× decode so it
+            // stays crisp on Retina.
             Image {
                 visible: root.chevronSource === ""
                 Layout.preferredWidth: Theme.iconSm
                 Layout.preferredHeight: Theme.iconSm
                 Layout.alignment: Qt.AlignVCenter
                 source: Theme.icon("chevron-down")
-                sourceSize.width: Theme.iconSm
-                sourceSize.height: Theme.iconSm
+                sourceSize.width: Theme.iconSm * 2
+                sourceSize.height: Theme.iconSm * 2
                 fillMode: Image.PreserveAspectFit
                 smooth: true
             }
@@ -213,8 +218,8 @@ Item {
                             visible: rowBtn.modelData.index === root.currentIndex
                                       && root.checkIconSource !== ""
                             source: root.checkIconSource
-                            sourceSize.width: Theme.iconSm
-                            sourceSize.height: Theme.iconSm
+                            sourceSize.width: Theme.iconSm * 2
+                            sourceSize.height: Theme.iconSm * 2
                             fillMode: Image.PreserveAspectFit
                         }
 
