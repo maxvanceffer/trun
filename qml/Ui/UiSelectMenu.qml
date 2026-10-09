@@ -25,6 +25,10 @@ Item {
     property string chevronSource: ""
     // Icon source of the selected entry; empty — the "✓" glyph.
     property string checkIconSource: ""
+    // Trigger label colour while a selection exists. Consumer-driven like
+    // chevronSource/checkIconSource (the API URL bar passes the method
+    // colour); the default keeps textPrimary for all existing call sites.
+    property color selectedColor: Theme.textPrimary
 
     signal activated(int index)
 
@@ -84,7 +88,7 @@ Item {
             Label {
                 Layout.fillWidth: true
                 text: root.displayText
-                color: root.currentIndex >= 0 ? Theme.textPrimary : Theme.textMuted
+                color: root.currentIndex >= 0 ? root.selectedColor : Theme.textMuted
                 font.pixelSize: Theme.fontSizeLg
                 elide: Text.ElideRight
             }

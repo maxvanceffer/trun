@@ -56,6 +56,7 @@ private slots:
     void test_api_page_list_groups();
     void test_api_page_open_request();
     void test_api_page_keys();
+    void test_api_request_urlbar();
     void test_app_dialog_hosting();
     void test_ui_list_element_click_through();
 };

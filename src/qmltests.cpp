@@ -1703,6 +1703,16 @@ public:
         m_requests = r;
         emit requestsChanged();
     }
+    void setEnvironments(const QVariantList &e)
+    {
+        m_envs = e;
+        emit environmentsChanged();
+    }
+    void setActiveEnvId(const QString &id)
+    {
+        m_active = id;
+        emit activeEnvIdChanged();
+    }
     Q_INVOKABLE void ensureLoaded() {}
     Q_INVOKABLE bool setActiveEnv(const QString &id)
     {
@@ -2119,6 +2129,169 @@ void QmlTests::test_api_page_keys()
     QTest::qWait(50);
     QVERIFY2(!page->property("requestOpen").toBool(),
              "Esc must work even when no control inside the page has focus");
+
+    delete obj;
+}
+
+// R4: the URL bar. openDraft presets the method select and the mono URL
+// field; the "→ resolved" line substitutes active-environment variables in
+// live (non-secret values inline, secrets masked with dots — QML never sees
+// Keychain values); the method/environment selects drive the working request;
+// Send ⇄ Cancel swaps and locks the bar while "in flight" (UI stub, R6 wires
+// the network).
+void QmlTests::test_api_request_urlbar()
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("logModel", g_logModel);
+    const QString buildDir = QDir::currentPath();
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(buildDir + "/icons/").toString());
+
+    FakeApiService api;
+    api.setEnvironments(QVariantList{
+        QVariantMap{
+            {QStringLiteral("id"), QStringLiteral("local")},
+            {QStringLiteral("name"), QStringLiteral("local")},
+            {QStringLiteral("vars"), QVariantList{
+                QVariantMap{
+                    {QStringLiteral("name"), QStringLiteral("baseUrl")},
+                    {QStringLiteral("value"), QStringLiteral("http://localhost:8000")},
+                    {QStringLiteral("secret"), false},
+                },
+                QVariantMap{
+                    {QStringLiteral("name"), QStringLiteral("token")},
+                    {QStringLiteral("value"), QString()},
+                    {QStringLiteral("secret"), true},
+                    {QStringLiteral("hasSavedValue"), true},
+                },
+            }},
+        },
+        QVariantMap{
+            {QStringLiteral("id"), QStringLiteral("staging")},
+            {QStringLiteral("name"), QStringLiteral("staging")},
+            {QStringLiteral("vars"), QVariantList{}},
+        },
+    });
+    api.setActiveEnvId(QStringLiteral("local"));
+    engine.rootContext()->setContextProperty("apiService", &api);
+
+    FakeProjectServiceForApi proj;
+    proj.setProjects(QVariantList{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("p/one")},
+                    {QStringLiteral("name"), QStringLiteral("personizely-backend")}}});
+    engine.rootContext()->setContextProperty("projectService", &proj);
+
+    FakeDashboardForApi dash;
+    engine.rootContext()->setContextProperty("dashboard", &dash);
+
+    QQmlComponent component(&engine,
+        QUrl::fromLocalFile(sourceQmlPath("ApiPage.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+
+    QQuickWindow window;
+    window.resize(1000, 800);
+    QObject *obj = component.createWithInitialProperties({}, engine.rootContext());
+    QVERIFY(obj != nullptr);
+    auto *page = qobject_cast<QQuickItem *>(obj);
+    QVERIFY(page != nullptr);
+    page->setParentItem(window.contentItem());
+    page->setPosition(QPointF(0, 0));
+    page->setSize(QSizeF(1000, 800));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTest::qWait(50);
+
+    // A draft whose URL mixes the local environment's baseUrl with a secret.
+    QVERIFY(QMetaObject::invokeMethod(page, "openDraft",
+        Q_ARG(QVariant, QStringLiteral("{{baseUrl}}/api/{{token}}/campaigns"))));
+    QVERIFY(page->property("requestOpen").toBool());
+    QTest::qWait(50);
+
+    QQuickItem *pane = page->findChild<QQuickItem *>(QStringLiteral("apiRequestPage"));
+    QVERIFY(pane != nullptr);
+    QQuickItem *methodSelect = pane->findChild<QQuickItem *>(QStringLiteral("apiMethodSelect"));
+    QVERIFY(methodSelect != nullptr);
+    QQuickItem *urlField = pane->findChild<QQuickItem *>(QStringLiteral("apiUrlField"));
+    QVERIFY(urlField != nullptr);
+    QQuickItem *envSelect = pane->findChild<QQuickItem *>(QStringLiteral("apiEnvSelect"));
+    QVERIFY(envSelect != nullptr);
+    QQuickItem *sendBtn = pane->findChild<QQuickItem *>(QStringLiteral("apiSendButton"));
+    QVERIFY(sendBtn != nullptr);
+    QQuickItem *cancelBtn = pane->findChild<QQuickItem *>(QStringLiteral("apiCancelButton"));
+    QVERIFY(cancelBtn != nullptr);
+    QQuickItem *resolved = pane->findChild<QQuickItem *>(QStringLiteral("apiResolvedLine"));
+    QVERIFY(resolved != nullptr);
+
+    // Draft preset: GET, the draft URL; the preview substitutes baseUrl and
+    // masks the secret with dots.
+    QCOMPARE(methodSelect->property("currentIndex").toInt(), 0);
+    QCOMPARE(urlField->property("text").toString(),
+             QStringLiteral("{{baseUrl}}/api/{{token}}/campaigns"));
+    QCOMPARE(resolved->property("text").toString(),
+             QStringLiteral("→ http://localhost:8000/api/••••••••/campaigns"));
+
+    // Method switch: simulate the select's row click — the delegate sets
+    // currentIndex, then emits activated -> selectMethod. POST lands in the
+    // working request and marks it dirty.
+    methodSelect->setProperty("currentIndex", 1);
+    QVERIFY(QMetaObject::invokeMethod(methodSelect, "activated", Q_ARG(int, 1)));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("dirty").toBool(), true);
+    QCOMPARE(methodSelect->property("currentIndex").toInt(), 1);
+    QVariantMap working = pane->property("requestMap").value<QVariantMap>();
+    QCOMPARE(working.value(QStringLiteral("method")).toString(),
+             QStringLiteral("POST"));
+
+    // Environment switch to "staging" (no vars): the preview keeps the raw
+    // {{...}} placeholders; back to "local" restores the substitution.
+    envSelect->setProperty("currentIndex", 1);
+    QVERIFY(QMetaObject::invokeMethod(envSelect, "activated", Q_ARG(int, 1)));
+    QTest::qWait(20);
+    QCOMPARE(api.activeEnvId(), QStringLiteral("staging"));
+    QCOMPARE(resolved->property("text").toString(),
+             QStringLiteral("→ {{baseUrl}}/api/{{token}}/campaigns"));
+    envSelect->setProperty("currentIndex", 0);
+    QVERIFY(QMetaObject::invokeMethod(envSelect, "activated", Q_ARG(int, 0)));
+    QTest::qWait(20);
+    QCOMPARE(resolved->property("text").toString(),
+             QStringLiteral("→ http://localhost:8000/api/••••••••/campaigns"));
+
+    // Typing in the URL field updates the request and the preview live.
+    urlField->forceActiveFocus();
+    QTest::qWait(20);
+    QVERIFY(urlField->hasActiveFocus());
+    // "/live" — keyClicks is a QWidget-API; QWindow needs per-key clicks.
+    const QString typed = QStringLiteral("/live");
+    for (const QChar &c : typed) {
+        Qt::Key key = (c == u'/') ? Qt::Key_Slash
+            : static_cast<Qt::Key>(c.toUpper().unicode());
+        QTest::keyClick(&window, key);
+    }
+    QTest::qWait(50);
+    QCOMPARE(urlField->property("text").toString(),
+             QStringLiteral("{{baseUrl}}/api/{{token}}/campaigns/live"));
+    QCOMPARE(resolved->property("text").toString(),
+             QStringLiteral("→ http://localhost:8000/api/••••••••/campaigns/live"));
+    working = pane->property("requestMap").value<QVariantMap>();
+    QCOMPARE(working.value(QStringLiteral("url")).toString(),
+             QStringLiteral("{{baseUrl}}/api/{{token}}/campaigns/live"));
+
+    // Send ⇄ Cancel (UI stub): in flight the bar locks and Cancel replaces
+    // Send; cancel restores everything.
+    QVERIFY(QMetaObject::invokeMethod(pane, "startSend"));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("sending").toBool(), true);
+    QCOMPARE(sendBtn->property("visible").toBool(), false);
+    QCOMPARE(cancelBtn->property("visible").toBool(), true);
+    QCOMPARE(urlField->property("enabled").toBool(), false);
+    QCOMPARE(methodSelect->property("enabled").toBool(), false);
+    QCOMPARE(envSelect->property("enabled").toBool(), false);
+    QVERIFY(QMetaObject::invokeMethod(pane, "cancelSend"));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("sending").toBool(), false);
+    QCOMPARE(sendBtn->property("visible").toBool(), true);
+    QCOMPARE(urlField->property("enabled").toBool(), true);
 
     delete obj;
 }

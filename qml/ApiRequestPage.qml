@@ -32,6 +32,15 @@ Item {
 
     property bool savedFlash: false
 
+    // R4: an in-flight send. UI stub until R6 wires the network slice —
+    // while true the URL bar locks and Send becomes Cancel.
+    property bool sending: false
+
+    // Live-refresh tick for the "→ resolved" line: edits land in QML-var
+    // fields, which do not re-evaluate bindings, so typing in the URL field
+    // bumps this counter to pull the preview.
+    property int resolveTick: 0
+
     readonly property bool showUnsaved: reqRoot.dirty || !reqRoot.saved
 
     // "Saved ✓" flash after a successful save (design's saveLabel).
@@ -78,6 +87,91 @@ Item {
         if (reqRoot.savedFlash)
             return qsTr("Saved ✓")
         return reqRoot.saved ? qsTr("Save") : qsTr("Save…")
+    }
+
+    // ─── R4 URL bar helpers ───────────────────────────────────────────
+    // Method options — the design's methodOpts.
+    readonly property var methodOpts: ["GET", "POST", "PUT", "PATCH", "DELETE"]
+
+    // Environments mirror ApiPage's: app-wide list + active id, so the
+    // request page's switch and the Dashboard env card stay in sync.
+    readonly property var envList: reqRoot.svc ? reqRoot.svc.environments : []
+
+    function envById(id) {
+        for (var i = 0; i < reqRoot.envList.length; ++i)
+            if (reqRoot.envList[i].id === id)
+                return reqRoot.envList[i]
+        return null
+    }
+
+    function envNames() {
+        var out = []
+        for (var i = 0; i < reqRoot.envList.length; ++i)
+            out.push(reqRoot.envList[i].name || reqRoot.envList[i].id)
+        return out
+    }
+
+    function activeEnvIndex() {
+        for (var i = 0; i < reqRoot.envList.length; ++i)
+            if (reqRoot.envList[i].id === reqRoot.svc.activeEnvId)
+                return i
+        return 0
+    }
+
+    function methodIndex() {
+        var m = reqRoot.requestMap ? (reqRoot.requestMap.method || "GET") : "GET"
+        return reqRoot.methodOpts.indexOf(m)
+    }
+
+    // Plain functions instead of inline onActivated bodies so the harness
+    // can drive them without opening the popups.
+    function selectMethod(index) {
+        if (!reqRoot.requestMap)
+            return
+        if (index < 0 || index >= reqRoot.methodOpts.length)
+            return
+        var m = reqRoot.methodOpts[index]
+        if (reqRoot.requestMap.method !== m) {
+            reqRoot.requestMap.method = m
+            reqRoot.dirty = true
+        }
+    }
+
+    function selectEnv(index) {
+        var envs = reqRoot.envList
+        if (!reqRoot.svc || index < 0 || index >= envs.length)
+            return
+        reqRoot.svc.setActiveEnv(envs[index].id)
+    }
+
+    function startSend() { reqRoot.sending = true }
+    function cancelSend() { reqRoot.sending = false }
+
+    // "→ {{ resolved }}" preview — the URL with active-environment variables
+    // substituted. Secret values never reach QML (Keychain keeps them, the
+    // var's value is empty by design), so they read as dots — the same
+    // masking the environments list uses; R6's send resolves for real on the
+    // C++ side. resolveTick keeps the preview live while typing.
+    function resolvedUrl() {
+        var tick = reqRoot.resolveTick // binding dependency
+        if (!reqRoot.requestMap)
+            return ""
+        var url = reqRoot.requestMap.url || ""
+        var env = reqRoot.envById(reqRoot.svc ? reqRoot.svc.activeEnvId : "")
+        if (!env)
+            return url
+        var vars = env.vars || []
+        for (var i = 0; i < vars.length; ++i) {
+            var v = vars[i]
+            var name = (v.name || "").trim()
+            if (name === "")
+                continue
+            if (v.secret && !v.hasSavedValue)
+                continue // not set — leave {{name}} visible
+            var value = v.secret ? "••••••••" : (v.value || "")
+            url = url.split("{{" + name + "}}").join(value)
+        }
+        return url
     }
 
     // Persists the working map; adopts the id returned by the service so the
@@ -169,8 +263,111 @@ Item {
             }
         }
 
-        // R4+ body (URL bar, tabs, response panel) lands here.
-        Item { Layout.fillWidth: true; Layout.fillHeight: true }
+        // R4 body: the URL bar (method · URL · environment · Send/Cancel)
+        // and the resolved-URL line. R5 stacks the tab panel under it, R6
+        // the response panel.
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacingSm
+
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: Theme.spacingSm
+
+                // Method select: the design's methodOpts; the trigger tints
+                // with the method colour, tracked from the selection itself
+                // (QML-var field edits do not re-evaluate bindings).
+                UiSelectMenu {
+                    id: methodSelect
+                    objectName: "apiMethodSelect"
+                    Layout.preferredWidth: 108
+                    model: reqRoot.methodOpts
+                    placeholderText: qsTr("Method")
+                    searchable: false
+                    selectedColor: reqRoot.methodColor(
+                        reqRoot.methodOpts[methodSelect.currentIndex])
+                    currentIndex: reqRoot.methodIndex()
+                    enabled: !reqRoot.sending
+                    onActivated: function (index) { reqRoot.selectMethod(index) }
+                }
+
+                // URL field: mono (Theme.fontMono). Editing marks dirty and
+                // refreshes the resolved line.
+                UiInput {
+                    id: urlField
+                    objectName: "apiUrlField"
+                    Layout.fillWidth: true
+                    font.family: Theme.fontMono
+                    placeholderText: qsTr("https://…")
+                    text: reqRoot.requestMap ? (reqRoot.requestMap.url || "") : ""
+                    enabled: !reqRoot.sending
+                    onTextEdited: {
+                        if (reqRoot.requestMap) {
+                            reqRoot.requestMap.url = text
+                            reqRoot.dirty = true
+                            reqRoot.resolveTick++
+                        }
+                    }
+                }
+
+                // Environment switch: app-wide — the Dashboard env card and
+                // the resolved line follow the same active environment.
+                UiSelectMenu {
+                    id: envSelect
+                    objectName: "apiEnvSelect"
+                    Layout.preferredWidth: 140
+                    model: reqRoot.envNames()
+                    placeholderText: qsTr("Environment")
+                    searchable: false
+                    currentIndex: reqRoot.activeEnvIndex()
+                    enabled: !reqRoot.sending
+                    onActivated: function (index) { reqRoot.selectEnv(index) }
+                }
+
+                // Send ⇄ Cancel: an in-flight request locks the bar and
+                // offers Cancel; R6 wires the actual network slice.
+                UiButton {
+                    objectName: "apiSendButton"
+                    Layout.alignment: Qt.AlignVCenter
+                    visible: !reqRoot.sending
+                    label: qsTr("Send")
+                    color: "primary"
+                    variant: "solid"
+                    size: "md"
+                    onClicked: reqRoot.startSend()
+                }
+                RowLayout {
+                    Layout.alignment: Qt.AlignVCenter
+                    visible: reqRoot.sending
+                    spacing: Theme.spacingSm
+                    Spinner {
+                        Layout.preferredWidth: 14
+                        Layout.preferredHeight: 14
+                        color: Theme.textDimmed
+                        running: true
+                    }
+                    UiButton {
+                        objectName: "apiCancelButton"
+                        label: qsTr("Cancel")
+                        color: "neutral"
+                        variant: "outline"
+                        size: "md"
+                        onClicked: reqRoot.cancelSend()
+                    }
+                }
+            }
+
+            // Resolved-URL line: "→ {{ resolved }}" — env vars substituted.
+            Label {
+                objectName: "apiResolvedLine"
+                Layout.fillWidth: true
+                text: qsTr("→ %1").arg(reqRoot.resolvedUrl())
+                color: Theme.textSubtle
+                font.family: Theme.fontMono
+                font.pixelSize: Theme.fontSizeSm
+                elide: Text.ElideRight
+            }
+        }
     }
 
     // Save dialog — the design's first-save flow: suggest a name from

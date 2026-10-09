@@ -106,6 +106,10 @@ QtObject {
     readonly property int fontSizeMd: 12
     readonly property int fontSizeLg: 13
 
+    // Mono face for code surfaces (API URL bar, R6 JSON body): the design
+    // calls out Menlo; a token so every code surface shares one family.
+    readonly property string fontMono: "Menlo"
+
     // ─── Motion ────────────────────────────────────────────────────────
     // Single source of truth for animation timings so hover/press fades
     // stay consistent across controls (IconButton ghost, rescan, fades).
