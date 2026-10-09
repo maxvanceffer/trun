@@ -20,8 +20,10 @@ field, environment switch, Send/Cancel with a loading state, and the
 - Environment switch: UiSelectMenu over `ApiService.environments`; selects the
   app-wide active environment — the same one the Dashboard env card shows, so
   both follow `setActiveEnv`.
-- Send ⇄ Cancel: while `sending` the bar locks (method/URL/env disabled) and
-  Send becomes Cancel with a spinner. UI stub — R6 wires the network slice.
+- Send ⇄ Cancel: while `sending` the bar locks (method/URL/env disabled), the
+  Send button turns its own Nuxt `loading` spinner on inside (and is disabled),
+  and a separate Cancel button appears beside it. UI stub — R6 wires the
+  network slice.
 - Resolved line: `→ {{ resolved }}` — the URL with active-environment
   variables substituted. Non-secret values inline; secrets that are set read
   as `••••••••` (Keychain values never reach QML — R6's send resolves for
@@ -33,7 +35,12 @@ field, environment switch, Send/Cancel with a loading state, and the
 
 - `UiSelectMenu`: new `selectedColor` property — consumer-supplied trigger
   label colour while a selection exists (same extension pattern as
-  chevronSource/checkIconSource; default `Theme.textPrimary`).
+  chevronSource/checkIconSource; default `Theme.textPrimary`). Default trigger
+  chevron is now the shared chevron icon (drawn like the project tree: 64px
+  PNG downscaled, 16px decode) instead of a text glyph.
+- `UiButton`: Nuxt `loading` renders the spinner inside the button — left by
+  default, right with the new `trailing` prop (Button.vue/useComponentIcons);
+  loading still disables the button.
 - `Theme`: `fontMono = "Menlo"` — first font-family token; all mono surfaces
   (URL bar now, JSON body in R6) share one family.
 
