@@ -63,11 +63,24 @@ function ansiToHtml(input) {
     return out
 }
 
-// Full console row: "[timestamp] target: message" with the prefix in the
-// level color and the message in its own ANSI colors. One zero-margin div
-// per row: plain <br> rows drift apart once the document is re-parsed.
-function formatLine(timestamp, target, message, prefixColor) {
+// Run-style console row: a relative elapsed gutter ("+0.42s" from the
+// run start) plus the message in its own ANSI colors. No per-line
+// "[timestamp] target:" prefix — the page already shows a single run.
+// `kind === "echo"` marks the launch line, rendered in the echo color.
+function formatElapsed(ms) {
+    var s = Math.max(0, ms) / 1000
+    if (s < 60)
+        return "+" + s.toFixed(2) + "s"
+    var m = Math.floor(s / 60)
+    var rest = s - m * 60
+    return "+" + m + ":" + (rest < 10 ? "0" : "") + rest.toFixed(2)
+}
+
+function formatLine(elapsedMs, message, kind, gutterColor, echoColor) {
+    var body = (kind === "echo")
+        ? '<span style="color:' + echoColor + '">' + escapeHtml(message) + '</span>'
+        : ansiToHtml(message)
     return '<div style="margin-top:0px; margin-bottom:0px;">'
-        + '<span style="color:' + prefixColor + '">[' + escapeHtml(timestamp)
-        + '] ' + escapeHtml(target) + ':</span> ' + ansiToHtml(message) + '</div>'
+        + '<span style="color:' + gutterColor + '">' + formatElapsed(elapsedMs)
+        + '</span> ' + body + '</div>'
 }

@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../"
 
 // UiAlert — Nuxt UI Alert equivalent: a full-width callout with a leading
 // icon, a title + description stack, trailing actions and an optional
@@ -36,7 +37,7 @@ Item {
     readonly property color tint: colorFor(root.color)
     readonly property color foreground: {
         if (variant === "solid")
-            return color === "neutral" ? Theme.textInverted : Theme.primaryForeground
+            return color === "neutral" ? Theme.textInverted : Theme.accentForeground
         return color === "neutral" ? Theme.textPrimary : tint
     }
     readonly property color contentFill: {
@@ -129,7 +130,7 @@ Rectangle {
                 }
                 contentItem: Label {
                     text: parent.text
-                    color: root.color === "neutral" ? Theme.textInverted : Theme.primaryForeground
+                    color: root.color === "neutral" ? Theme.textInverted : Theme.accentForeground
                     font.pixelSize: Theme.fontSizeMd
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter
@@ -180,7 +181,7 @@ Rectangle {
                 }
                 contentItem: Label {
                     text: parent.text
-                    color: root.color === "neutral" ? Theme.textInverted : Theme.primaryForeground
+                    color: root.color === "neutral" ? Theme.textInverted : Theme.accentForeground
                     font.pixelSize: Theme.fontSizeMd
                     font.bold: true
                     horizontalAlignment: Text.AlignHCenter

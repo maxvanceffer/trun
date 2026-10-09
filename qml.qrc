@@ -3,10 +3,12 @@
         <file>qml/main.qml</file>
         <file>qml/Sidebar.qml</file>
         <file>qml/Dashboard.qml</file>
-        <file>qml/Wizard.qml</file>
         <file>qml/WizardWindow.qml</file>
         <file>qml/CommandCard.qml</file>
-        <file>qml/TreeItem.qml</file>
+        <file>qml/ConsoleCommandCard.qml</file>
+        <file>qml/Ui/UiSegmented.qml</file>
+        <file>qml/Ui/UiLabeledSegmented.qml</file>
+        <file>qml/ConsoleParameters.qml</file>
         <file>qml/TreeItemDelegate.qml</file>
         <file>qml/Theme.qml</file>
         <file>qml/IconButton.qml</file>
@@ -23,53 +25,63 @@
         <file>qml/UpdateAlert.qml</file>
         <file>qml/TrafficLights.qml</file>
         <file>qml/DatabasesPage.qml</file>
+        <file>qml/ConnectionDialog.qml</file>
         <file>qml/DockerPage.qml</file>
+        <file>qml/ApiPage.qml</file>
+        <file>qml/EnvironmentsDialog.qml</file>
         <file>qml/BusyLabel.qml</file>
         <file>qml/Spinner.qml</file>
-        <file>qml/UiSelectMenu.qml</file>
-        <file>qml/UiCheckBox.qml</file>
-        <file>qml/UiInput.qml</file>
-        <file>qml/UiTag.qml</file>
-        <file>qml/UiAlert.qml</file>
-        <file>qml/UiTooltip.qml</file>
-        <file>qml/UiIcon.qml</file>
+        <file>qml/Ui/UiSelectMenu.qml</file>
+        <file>qml/Ui/UiCheckBox.qml</file>
+        <file>qml/Ui/UiInput.qml</file>
+        <file>qml/Ui/UiTag.qml</file>
+        <file>qml/Ui/UiAlert.qml</file>
+        <file>qml/Ui/UiTooltip.qml</file>
+        <file>qml/Ui/UiIcon.qml</file>
+        <file>qml/Ui/UiButton.qml</file>
+        <file>qml/Ui/UiListElement.qml</file>
+        <file>qml/components/AppDialog.qml</file>
+        <file>qml/components/AppSwitch.qml</file>
+        <file>qml/components/ConfirmDialog.qml</file>
         <file>assets/wizard/wizard-bg.png</file>
         <file>assets/wizard/wizard-bg@2x.png</file>
     </qresource>
     <qresource prefix="/icons">
-        <file>assets/icons/cmake-32px.png</file>
-        <file>assets/icons/composer-32px.png</file>
-        <file>assets/icons/default-32px.png</file>
-        <file>assets/icons/elixir-32px.png</file>
+        <file>assets/icons/cmake.png</file>
+        <file>assets/icons/composer.png</file>
+        <file>assets/icons/default.png</file>
+        <file>assets/icons/elixir.png</file>
         <file>assets/icons/folder-code.png</file>
         <file>assets/icons/folder-code-dark.png</file>
         <file>assets/icons/folder-plus.png</file>
         <file>assets/icons/folder-plus-dark.png</file>
-        <file>assets/icons/square-menu.png</file>
-        <file>assets/icons/square-menu-dark.png</file>
-        <file>assets/icons/rotate-cw.png</file>
-        <file>assets/icons/rotate-cw-dark.png</file>
+        <file>assets/icons/pin.png</file>
+        <file>assets/icons/pin-dark.png</file>
+        <file>assets/icons/refresh.png</file>
+        <file>assets/icons/refresh-dark.png</file>
         <file>assets/icons/run-all.png</file>
         <file>assets/icons/run-all-dark.png</file>
         <file>assets/icons/stop-all.png</file>
         <file>assets/icons/stop-all-dark.png</file>
-        <file>assets/icons/go-dark-32px.png</file>
-        <file>assets/icons/go-light-32px.png</file>
-        <file>assets/icons/gradle-32px.png</file>
-        <file>assets/icons/java-32px.png</file>
-        <file>assets/icons/npm-32px.png</file>
-        <file>assets/icons/python-32px.png</file>
-        <file>assets/icons/ruby-32px.png</file>
-        <file>assets/icons/rust-dark-32px.png</file>
-        <file>assets/icons/rust-light-32px.png</file>
-        <file>assets/icons/file-terminal.png</file>
-        <file>assets/icons/file-terminal-dark.png</file>
+        <file>assets/icons/stop.png</file>
+        <file>assets/icons/stop-dark.png</file>
+        <file>assets/icons/go-dark.png</file>
+        <file>assets/icons/go.png</file>
+        <file>assets/icons/gradle.png</file>
+        <file>assets/icons/java.png</file>
+        <file>assets/icons/npm.png</file>
+        <file>assets/icons/python.png</file>
+        <file>assets/icons/ruby.png</file>
+        <file>assets/icons/rust-dark.png</file>
+        <file>assets/icons/rust.png</file>
+        <file>assets/icons/file.png</file>
+        <file>assets/icons/file-dark.png</file>
         <file>assets/icons/folders.png</file>
         <file>assets/icons/folders-dark.png</file>
         <file>assets/icons/bash.png</file>
         <file>assets/icons/bash-dark.png</file>
-        <file>assets/icons/brush-cleaning.png</file>
-        <file>assets/icons/brush-cleaning-dark.png</file>
+        <file>assets/icons/clean.png</file>
+        <file>assets/icons/clean-dark.png</file>
         <file>assets/icons/cog.png</file>
         <file>assets/icons/cog-dark.png</file>
         <file>assets/icons/dashboard.png</file>
@@ -80,23 +92,34 @@
         <file>assets/icons/chevron-up-dark.png</file>
         <file>assets/icons/check.png</file>
         <file>assets/icons/check-dark.png</file>
-        <file>assets/icons/funnel-x.png</file>
-        <file>assets/icons/funnel-x-dark.png</file>
+        <file>assets/icons/filter.png</file>
+        <file>assets/icons/filter-dark.png</file>
         <file>assets/icons/chevron-right.png</file>
         <file>assets/icons/chevron-right-dark.png</file>
-        <file>assets/icons/terminal-light-32px.png</file>
-        <file>assets/icons/terminal-dark-32px.png</file>
+        <file>assets/icons/chevron-left.png</file>
+        <file>assets/icons/chevron-left-dark.png</file>
+        <file>assets/icons/play.png</file>
+        <file>assets/icons/play-dark.png</file>
+        <file>assets/icons/clipboard.png</file>
+        <file>assets/icons/clipboard-dark.png</file>
+        <file>assets/icons/terminal.png</file>
+        <file>assets/icons/terminal-dark.png</file>
         <file>assets/icons/tray-template.png</file>
-        <file>assets/icons/mcp-light-32px.png</file>
-        <file>assets/icons/mcp-dark-32px.png</file>
-        <file>assets/icons/postgresql-badge-64px.png</file>
-        <file>assets/icons/mysql-64px.png</file>
-        <file>assets/icons/mongodb-64px.png</file>
-        <file>assets/icons/redis-64px.png</file>
+        <file>assets/icons/mcp.png</file>
+        <file>assets/icons/mcp-dark.png</file>
+        <file>assets/icons/postgresql.png</file>
+        <file>assets/icons/mysql.png</file>
+        <file>assets/icons/mongodb.png</file>
+        <file>assets/icons/redis.png</file>
         <file>assets/icons/database.png</file>
         <file>assets/icons/database-dark.png</file>
         <file>assets/icons/docker.png</file>
         <file>assets/icons/docker-dark.png</file>
         <file>assets/icons/git-branch.png</file>
+        <file>assets/icons/globe-code.png</file>
+        <file>assets/icons/globe-code-dark.png</file>
+        <file>assets/icons/symfony.png</file>
+        <file>assets/icons/symfony-dark.png</file>
+        <file>assets/icons/laravel.png</file>
     </qresource>
 </RCC>

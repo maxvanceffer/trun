@@ -19,6 +19,7 @@
 
 class Settings;
 class CommandExecutor;
+class FrameworkConsole;
 
 class ProjectService : public QObject {
     Q_OBJECT
@@ -51,6 +52,21 @@ public:
     void setExecutor(CommandExecutor *executor);
 
     static QStringList splitArgs(const QString &text);
+
+    // Assembles run arguments for a console record from saved per-arg
+    // values (runConfig "argsValues": {argName: stringValue}).
+    // Records without argsMeta keep their flat args unchanged
+    // (composer/npm behavior). Returns the assembled QStringList;
+    // `missing` collects the required positional names that are absent
+    // or empty (empty list when everything required is filled).
+    static QStringList assembleConsoleArgs(const QJsonObject &cmd, const QJsonObject &values,
+                                           QStringList &missing);
+    // Flag-era residue cleanup for stored argsValues (in place): options
+    // accepting a value (VALUE_REQUIRED/VALUE_OPTIONAL) that still hold
+    // the old flag sentinel "on" fall back to their declared default
+    // (or are dropped when there is none). Real flags and non-option
+    // keys are untouched.
+    static void sanitizeConsoleValues(const QJsonObject &cmd, QJsonObject &values);
 
     Q_INVOKABLE void scanFolder(const QString &rootPath);
     Q_INVOKABLE bool restoreFromCache();
@@ -85,12 +101,27 @@ public:
     // Full launch: stored run configuration + overrides applied, then run.
     // Shared by the tray menu and the MCP server.
     Q_INVOKABLE bool runCommandEffective(const QString &projectRef, const QString &commandRef);
+    // Same, but merges an in-memory values map over the stored
+    // runConfig argsValues before assembling console args. Used for
+    // secret values (password/token), which are deliberately not
+    // persisted.
+    Q_INVOKABLE bool runCommandEffectiveWithValues(const QString &projectRef, const QString &commandRef,
+                                                   const QVariantMap &extraValues);
+    bool runCommandEffectiveImpl(const QString &projectRef, const QString &commandRef,
+                                 const QVariantMap &extraValues);
     int runResolved(const QString &commandId, const QString &executable,
                     const QStringList &args, const QString &workdir, const QString &label,
                     const QStringList &env, bool allowMultiple);
+    // Stored run config (settings key runConfig/<pid>/<cid>):
+    // executable/argsText/workdir/envText/allowMultiple. The overload
+    // also returns the saved per-argument values ("argsValues") used to
+    // assemble console commands; empty object when absent.
     void resolveRunConfig(const QString &projectId, const QString &commandId,
                           QString &executable, QStringList &args, QString &workdir,
                           QStringList &env, bool &allowMultiple);
+    void resolveRunConfig(const QString &projectId, const QString &commandId,
+                          QString &executable, QStringList &args, QString &workdir,
+                          QStringList &env, bool &allowMultiple, QJsonObject &values);
     Q_INVOKABLE void runCommand(const QString &command, const QStringList &args, const QString &workingDir);
     Q_INVOKABLE void stopCommand(int pid);
 
@@ -118,6 +149,12 @@ signals:
     void commandStarted(int pid, int memoryMb);
     void commandStopped(int pid);
     void commandFailed(int pid, const QString &error);
+    // A console command with required arguments was launched while some
+    // of them were still empty: the run was blocked before starting.
+    void runBlocked(const QString &commandId, const QStringList &missing);
+    // An explicit port was found in the args of a launched console
+    // command (`--port <value>` / `--port=<value>`), for runtime state.
+    void consoleDetectedPort(const QString &commandId, int port);
     void logMessage(const QString &level, const QString &target, const QString &message);
 
 private:
@@ -141,6 +178,22 @@ private:
     QSet<QString> m_visitedDirs;
     void persistWorkspace(const QString &rootPath);
     void applyProjects(const QList<QJsonObject> &projects);
+    // mtime of a file (0 when absent); used for console cache invalidation.
+    static qulonglong mtimeOf(const QString &path);
+    // Console discovery pass: for every composer.json project, keeps a
+    // valid consoleCache (framework + composer.lock + command dir mtimes
+    // all current), otherwise drops console records, marks consoleLoading
+    // and starts a background discovery (skipped when one is in-flight).
+    void refreshConsoleDiscovery();
+    void onDiscoveryFinished(const QString &projectPath, const QVariantList &commands);
+    void onDiscoveryFailed(const QString &projectPath, const QString &reason);
+    // Index of the project at this path in m_projects, -1 when absent.
+    int projectIndex(const QString &projectPath, const QString &manifest) const;
+    // Copy of a project into the matching m_scanned entry (by id), so
+    // rescans carry console cache + records over.
+    void syncScanned(const QJsonObject &project);
+    // Re-syncs m_activeProject/m_activeProjectCommands after a change.
+    void refreshActiveSelection();
     void mergeCustomCommands();
     void loadCustomCommands();
     void persistCustomCommands();
@@ -169,6 +222,8 @@ private:
     QmlTreeModel *m_treeModel;
     Settings *m_settings = nullptr;
     CommandExecutor *m_executor = nullptr;
+    FrameworkConsole *m_console = nullptr;
+    QSet<QString> m_consoleInFlight; // projects with a discovery running
     QString m_rootPath;
     QStringList m_rootPaths; // every scanned root, cleaned, deduplicated
     static const QStringList s_manifests;

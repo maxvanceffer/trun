@@ -53,6 +53,7 @@ private slots:
     void testStaticProgramDetection();
     void testNpmChainAndWrapperDetection();
     void testRescanDropsStaleSelection();
+    void testSanitizeConsoleValues();
 };
 
 void TestProjectService::initTestCase() {
@@ -1101,6 +1102,51 @@ void TestProjectService::testRescanDropsStaleSelection()
     QCOMPARE(service.projectCount(), 0);
     QVERIFY(service.activeProject().isEmpty());
     QVERIFY(service.activeProjectCommands().isEmpty());
+}
+
+void TestProjectService::testSanitizeConsoleValues()
+{
+    auto option = [](const char *name, bool valueRequired, bool acceptValue,
+                     const char *def) {
+        QJsonObject m{{QStringLiteral("kind"), QStringLiteral("option")},
+                      {QStringLiteral("name"), QString::fromUtf8(name)},
+                      {QStringLiteral("required"), false},
+                      {QStringLiteral("valueRequired"), valueRequired},
+                      {QStringLiteral("acceptValue"), acceptValue},
+                      {QStringLiteral("description"), QStringLiteral("d")}};
+        if (def != nullptr)
+            m.insert(QStringLiteral("default"), QString::fromUtf8(def));
+        return m;
+    };
+    const QJsonObject cmd{
+        {QStringLiteral("label"), QStringLiteral("ply:populate:campaign")},
+        {QStringLiteral("argsMeta"), QJsonArray{
+            option("campaign", true, true, nullptr), // required, no default
+            option("weeks", false, true, "5"), // optional value, default 5
+            option("skew", false, true, nullptr), // optional value, no default
+            option("outliers", false, false, nullptr), // real flag
+        }},
+    };
+
+    QJsonObject values{
+        {QStringLiteral("campaign"), QStringLiteral("15")}, // real value kept
+        {QStringLiteral("weeks"), QStringLiteral("on")}, // flag-era residue -> default
+        {QStringLiteral("skew"), QStringLiteral("on")}, // residue, no default -> dropped
+        {QStringLiteral("outliers"), QStringLiteral("on")}, // real flag kept
+        {QStringLiteral("env"), QStringLiteral("test")},
+    };
+    ProjectService::sanitizeConsoleValues(cmd, values);
+    QCOMPARE(values.value(QStringLiteral("campaign")).toString(), QStringLiteral("15"));
+    QCOMPARE(values.value(QStringLiteral("weeks")).toString(), QStringLiteral("5"));
+    QVERIFY(!values.contains(QStringLiteral("skew")));
+    QCOMPARE(values.value(QStringLiteral("outliers")).toString(), QStringLiteral("on"));
+    QCOMPARE(values.value(QStringLiteral("env")).toString(), QStringLiteral("test"));
+
+    // Records without argsMeta (composer/npm) pass through untouched.
+    QJsonObject flat{{QStringLiteral("args"), QJsonArray{QStringLiteral("dev")}}};
+    QJsonObject flatValues{{QStringLiteral("x"), QStringLiteral("on")}};
+    ProjectService::sanitizeConsoleValues(flat, flatValues);
+    QCOMPARE(flatValues.value(QStringLiteral("x")).toString(), QStringLiteral("on"));
 }
 
 QTEST_MAIN(TestProjectService)

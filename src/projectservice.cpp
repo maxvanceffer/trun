@@ -1,5 +1,6 @@
 #include "projectservice.h"
 #include "commandexecutor.h"
+#include "frameworkconsole.h"
 #include "settings.h"
 #include <QUrl>
 #include <QFileInfo>
@@ -19,7 +20,46 @@ const QStringList ProjectService::s_skipDirs = {
 };
 
 ProjectService::ProjectService(ProjectListModel *model, QObject *parent)
-    : QObject(parent), m_projectListModel(model), m_treeModel(new QmlTreeModel(this)) {}
+    : QObject(parent), m_projectListModel(model), m_treeModel(new QmlTreeModel(this)),
+      m_console(new FrameworkConsole(this))
+{
+    connect(m_console, &FrameworkConsole::discoveryFinished,
+            this, &ProjectService::onDiscoveryFinished);
+    connect(m_console, &FrameworkConsole::discoveryFailed,
+            this, &ProjectService::onDiscoveryFailed);
+}
+
+namespace {
+// True for records produced by console discovery (id "<Framework>:<name>").
+bool isConsoleRecord(const QJsonObject &cmd, const QStringList &frameworks)
+{
+    const QString id = cmd.value(QStringLiteral("id")).toString();
+    for (const QString &fw : frameworks)
+        if (id.startsWith(fw + QLatin1Char(':')))
+            return true;
+    return false;
+}
+
+// Removes console records from a project, keeping composer/npm records.
+void dropConsoleCommands(QJsonObject &project, const QStringList &frameworks)
+{
+    QJsonArray cmds;
+    for (const auto &v : project.value(QStringLiteral("commands")).toArray()) {
+        const QJsonObject c = v.toObject();
+        if (!isConsoleRecord(c, frameworks))
+            cmds.append(c);
+    }
+    project[QStringLiteral("commands")] = cmds;
+}
+
+qulonglong mtimeOfImpl(const QString &path)
+{
+    if (!QFileInfo::exists(path))
+        return 0;
+    return static_cast<qulonglong>(QFileInfo(path).lastModified().toMSecsSinceEpoch());
+}
+
+} // namespace
 
 void ProjectService::setSettings(Settings *settings)
 {
@@ -149,6 +189,7 @@ void ProjectService::scanFolder(const QString &rootPath) {
     applyProjects(m_scanned);
     if (!m_projects.isEmpty())
         persistWorkspace(clean);
+    refreshConsoleDiscovery();
     emit scanComplete(m_projects.size());
     logMessage("info", "scan", "Scan complete: " + QString::number(m_projects.size()) + " projects found");
 }
@@ -177,7 +218,7 @@ QJsonObject ProjectService::stripCustomCommands(const QJsonObject &project)
 }
 
 namespace {
-constexpr int kCacheVersion = 3; // bump when scan output format changes
+constexpr int kCacheVersion = 5; // bump when scan output format changes
 }
 
 bool ProjectService::isFolderKnown(const QString &folderPath) const
@@ -268,6 +309,7 @@ bool ProjectService::restoreFromCache()
     m_rootPaths = roots;
     m_rootPath = m_rootPaths.value(0);
     applyProjects(kept);
+    refreshConsoleDiscovery();
     logMessage("info", "cache", "Restored " + QString::number(kept.size()) + " projects");
     return true;
 }
@@ -345,6 +387,185 @@ void ProjectService::applyProjects(const QList<QJsonObject> &projects)
     m_projectListModel->setProjects(m_projects);
     emit projectsChanged();
     emit treeModelChanged();
+}
+
+qulonglong ProjectService::mtimeOf(const QString &path)
+{
+    return mtimeOfImpl(path);
+}
+
+int ProjectService::projectIndex(const QString &projectPath, const QString &manifest) const
+{
+    for (int i = 0; i < m_projects.size(); ++i)
+        if (m_projects.at(i).value(QStringLiteral("project_path")).toString() == projectPath
+            && m_projects.at(i).value(QStringLiteral("manifest")).toString() == manifest)
+            return i;
+    return -1;
+}
+
+void ProjectService::syncScanned(const QJsonObject &project)
+{
+    const QString id = project.value(QStringLiteral("id")).toString();
+    for (int i = 0; i < m_scanned.size(); ++i) {
+        if (m_scanned.at(i).value(QStringLiteral("id")).toString() == id) {
+            m_scanned[i] = project;
+            return;
+        }
+    }
+}
+
+void ProjectService::refreshActiveSelection()
+{
+    if (m_activeProject.isEmpty())
+        return;
+    const QString activeId = m_activeProject.value(QStringLiteral("id")).toString();
+    for (const auto &p : m_projects) {
+        if (p.value(QStringLiteral("id")).toString() != activeId)
+            continue;
+        m_activeProject = p;
+        m_activeProjectCommands.clear();
+        for (const auto &v : p.value(QStringLiteral("commands")).toArray())
+            m_activeProjectCommands.append(v.toObject());
+        emit activeProjectChanged();
+        emit activeProjectCommandsChanged();
+        return;
+    }
+}
+
+void ProjectService::refreshConsoleDiscovery()
+{
+    if (!m_console || m_projects.isEmpty())
+        return;
+    const QStringList fws = FrameworkConsole::frameworkNames();
+    bool changed = false;
+
+    for (int i = 0; i < m_projects.size(); ++i) {
+        const QJsonObject p = m_projects.at(i);
+        if (p.value(QStringLiteral("manifest")).toString() != QStringLiteral("composer.json"))
+            continue;
+        const QString path = p.value(QStringLiteral("project_path")).toString();
+        if (path.isEmpty())
+            continue;
+
+        QJsonObject composerDoc;
+        QFile composer(path + QStringLiteral("/composer.json"));
+        if (composer.open(QIODevice::ReadOnly))
+            composerDoc = QJsonDocument::fromJson(composer.readAll()).object();
+        const QString fw = m_console->detectFramework(path, composerDoc);
+
+        const QJsonObject cache = p.value(QStringLiteral("consoleCache")).toObject();
+        bool hasConsoleRecords = false;
+        for (const auto &v : p.value(QStringLiteral("commands")).toArray()) {
+            if (isConsoleRecord(v.toObject(), fws)) {
+                hasConsoleRecords = true;
+                break;
+            }
+        }
+
+        bool valid = false;
+        if (!fw.isEmpty()) {
+            valid = cache.value(QStringLiteral("framework")).toString() == fw
+                && cache.value(QStringLiteral("lockMtime")).toVariant().toLongLong()
+                     == static_cast<qint64>(mtimeOf(path + QStringLiteral("/composer.lock")))
+                && cache.value(QStringLiteral("dirMtime")).toVariant().toLongLong()
+                     == static_cast<qint64>(
+                             mtimeOf(path + QStringLiteral("/") + m_console->commandDirFor(fw)));
+        }
+
+        QJsonObject &cur = m_projects[i];
+        if (fw.isEmpty()) {
+            // Framework no longer present: stored console records are stale.
+            if (hasConsoleRecords || !cache.isEmpty()) {
+                dropConsoleCommands(cur, fws);
+                cur.remove(QStringLiteral("consoleCache"));
+                cur.remove(QStringLiteral("consoleLoading"));
+                cur.remove(QStringLiteral("consoleError"));
+                changed = true;
+            }
+        } else if (valid && hasConsoleRecords) {
+            continue; // stored discovery is still fresh
+        } else {
+            dropConsoleCommands(cur, fws);
+            cur.remove(QStringLiteral("consoleCache"));
+            cur.remove(QStringLiteral("consoleError"));
+            cur[QStringLiteral("consoleLoading")] = true;
+            if (!m_consoleInFlight.contains(path) && !m_console->discoveryInProgress(path)) {
+                m_consoleInFlight.insert(path);
+                m_console->startDiscovery(path);
+            }
+            changed = true;
+        }
+    }
+
+    if (!changed)
+        return;
+    for (const QJsonObject &p : m_projects)
+        syncScanned(p);
+    persistWorkspace(m_rootPath);
+    emit projectsChanged();
+    refreshActiveSelection();
+}
+
+void ProjectService::onDiscoveryFinished(const QString &projectPath, const QVariantList &commands)
+{
+    m_consoleInFlight.remove(projectPath);
+    const int i = projectIndex(projectPath, QStringLiteral("composer.json"));
+    if (i < 0)
+        return;
+    QJsonObject &p = m_projects[i];
+    const QStringList fws = FrameworkConsole::frameworkNames();
+
+    // Replace console records: drop the old ones, append the fresh list.
+    dropConsoleCommands(p, fws);
+    QJsonArray cmds = p.value(QStringLiteral("commands")).toArray();
+    for (const QVariant &v : commands)
+        cmds.append(v.toJsonObject());
+    p[QStringLiteral("commands")] = cmds;
+
+    const QString path = p.value(QStringLiteral("project_path")).toString();
+    QString fw;
+    if (!commands.isEmpty())
+        fw = commands.first().toJsonObject().value(QStringLiteral("category")).toString();
+    if (fw.isEmpty()) {
+        QFile composer(path + QStringLiteral("/composer.json"));
+        if (composer.open(QIODevice::ReadOnly))
+            fw = m_console->detectFramework(path, QJsonDocument::fromJson(composer.readAll()).object());
+    }
+    QJsonObject cache{
+        {"framework", fw},
+        {"lockMtime", static_cast<qint64>(mtimeOf(path + QStringLiteral("/composer.lock")))},
+        {"dirMtime", static_cast<qint64>(
+                mtimeOf(path + QStringLiteral("/") + m_console->commandDirFor(fw)))},
+        {"version", m_console->readFrameworkVersion(path)},
+    };
+    p[QStringLiteral("consoleCache")] = cache;
+    p.remove(QStringLiteral("consoleLoading"));
+    p.remove(QStringLiteral("consoleError"));
+
+    persistWorkspace(m_rootPath);
+    syncScanned(p);
+    emit projectsChanged();
+    refreshActiveSelection();
+}
+
+void ProjectService::onDiscoveryFailed(const QString &projectPath, const QString &reason)
+{
+    m_consoleInFlight.remove(projectPath);
+    const int i = projectIndex(projectPath, QStringLiteral("composer.json"));
+    if (i < 0)
+        return;
+    QJsonObject &p = m_projects[i];
+    const QStringList fws = FrameworkConsole::frameworkNames();
+
+    dropConsoleCommands(p, fws);
+    p.remove(QStringLiteral("consoleCache"));
+    p.remove(QStringLiteral("consoleLoading"));
+    p[QStringLiteral("consoleError")] = reason;
+
+    persistWorkspace(m_rootPath);
+    syncScanned(p);
+    emit projectsChanged();
+    refreshActiveSelection();
 }
 
 void ProjectService::mergeCustomCommands()
@@ -683,6 +904,15 @@ void ProjectService::resolveRunConfig(const QString &projectId, const QString &c
                                       QString &executable, QStringList &args, QString &workdir,
                                       QStringList &env, bool &allowMultiple)
 {
+    QJsonObject values;
+    resolveRunConfig(projectId, commandId, executable, args, workdir, env, allowMultiple, values);
+}
+
+void ProjectService::resolveRunConfig(const QString &projectId, const QString &commandId,
+                                      QString &executable, QStringList &args, QString &workdir,
+                                      QStringList &env, bool &allowMultiple, QJsonObject &values)
+{
+    values = QJsonObject();
     if (!m_settings)
         return;
     const QString raw =
@@ -708,6 +938,9 @@ void ProjectService::resolveRunConfig(const QString &projectId, const QString &c
     }
     if (cfg.contains(QStringLiteral("allowMultiple")))
         allowMultiple = cfg.value(QStringLiteral("allowMultiple")).toBool();
+    // Per-argument values for console commands ({argName: stringValue});
+    // stays empty when the key is absent.
+    values = cfg.value(QStringLiteral("argsValues")).toObject();
 }
 
 int ProjectService::runResolved(const QString &commandId, const QString &executable,
@@ -722,7 +955,172 @@ int ProjectService::runResolved(const QString &commandId, const QString &executa
                                   label.isEmpty() ? executable : label, commandId, env);
 }
 
+QStringList ProjectService::assembleConsoleArgs(const QJsonObject &cmd, const QJsonObject &values,
+                                                QStringList &missing)
+{
+    missing.clear();
+    const QJsonValue metaValue = cmd.value(QStringLiteral("argsMeta"));
+    if (!metaValue.isArray()) {
+        // Composer/npm records: flat args, nothing to assemble.
+        QStringList flat;
+        for (const QJsonValue &a : cmd.value(QStringLiteral("args")).toArray())
+            flat << a.toString();
+        return flat;
+    }
+
+    // Saved value for a meta entry. `name` may be the long flag
+    // ("--shell") or the bare key ("shell"); values are accepted in
+    // either spelling. Absent and empty are both reported as empty.
+    auto lookup = [&values](const QString &name) -> QString {
+        const QStringList candidates =
+            name.startsWith(QLatin1String("--"))
+                ? QStringList{name, name.mid(2)}
+                : QStringList{name, QLatin1String("--") + name};
+        for (const QString &key : candidates) {
+            const QJsonValue v = values.value(key);
+            if (v.isString()) {
+                if (!v.toString().isEmpty())
+                    return v.toString();
+            } else if (v.isDouble()) {
+                return QString::number(v.toDouble());
+            }
+        }
+        return {};
+    };
+
+    const QJsonArray meta = metaValue.toArray();
+    QStringList out;
+
+    // First positional is always the console command name itself
+    // (`bin/console <name> [args] [options]`): records carry it as
+    // `label`, ids are "<Framework>:<name>".
+    QString cmdName = cmd.value(QStringLiteral("label")).toString();
+    if (cmdName.isEmpty()) {
+        const QString id = cmd.value(QStringLiteral("id")).toString();
+        const int sep = id.indexOf(QLatin1Char(':'));
+        if (sep >= 0)
+            cmdName = id.mid(sep + 1);
+    }
+    if (!cmdName.isEmpty())
+        out << cmdName;
+
+    // Positionals, declaration order: only filled values are passed;
+    // a missing required one blocks the run (reported via `missing`).
+    for (const QJsonValue &entry : meta) {
+        const QJsonObject m = entry.toObject();
+        if (m.value(QStringLiteral("kind")).toString() != QLatin1String("positional"))
+            continue;
+        const QString name = m.value(QStringLiteral("name")).toString();
+        const QString value = lookup(name);
+        if (value.isEmpty()) {
+            if (m.value(QStringLiteral("required")).toBool())
+                missing << name;
+            continue;
+        }
+        out << value;
+    }
+
+    // Options, declaration order: filled values become --name=value
+    // (repeated per value for multi-value options), flag-only toggles
+    // become a bare --name. `--env` is skipped here — it is always
+    // appended once by the trailer below.
+    for (const QJsonValue &entry : meta) {
+        const QJsonObject m = entry.toObject();
+        if (m.value(QStringLiteral("kind")).toString() != QLatin1String("option"))
+            continue;
+        const QString rawName = m.value(QStringLiteral("name")).toString();
+        if (rawName.isEmpty())
+            continue;
+        const QString bareName =
+            rawName.startsWith(QLatin1String("--")) ? rawName.mid(2) : rawName;
+        if (bareName == QLatin1String("env"))
+            continue;
+        const QString value = lookup(rawName);
+        if (value.isEmpty())
+            continue; // unfilled options are not passed
+        const QString flag = QLatin1String("--") + bareName;
+        // VALUE_NONE options take no value at all: a bare flag (with the
+        // -v ladder special-cased). VALUE_REQUIRED and VALUE_OPTIONAL
+        // both render --name=value; unfilled ones are not passed.
+        if (!m.value(QStringLiteral("acceptValue")).toBool()) {
+            // Symfony's verbose is a no-value option whose levels are
+            // expressed by the shortcut ladder, not `--verbose=N`
+            // (VALUE_NONE rejects a value): store "1"/"2"/"3" (or a
+            // legacy "on"), pass the matching shortcut.
+            if (bareName == QLatin1String("verbose")) {
+                out << (value == QLatin1String("3") ? QStringLiteral("-vvv")
+                    : value == QLatin1String("2") ? QStringLiteral("-vv")
+                    : QStringLiteral("-v"));
+                continue;
+            }
+            out << flag; // toggle: stored value ignored
+            continue;
+        }
+        if (m.value(QStringLiteral("multiple")).toBool()
+            && value.contains(QRegularExpression(QStringLiteral("\\s+")))) {
+            const QStringList parts =
+                value.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+            for (const QString &part : parts)
+                out << flag + QLatin1Char('=') + part;
+            continue;
+        }
+        out << flag + QLatin1Char('=') + value;
+    }
+
+    // Trailer: --env (bare when unfilled) then -n, always last.
+    const QString envValue = lookup(QStringLiteral("env"));
+    out << QStringLiteral("--env");
+    if (!envValue.isEmpty())
+        out << envValue;
+    out << QStringLiteral("-n");
+    return out;
+}
+
+void ProjectService::sanitizeConsoleValues(const QJsonObject &cmd, QJsonObject &values)
+{
+    if (!cmd.value(QStringLiteral("argsMeta")).isArray())
+        return;
+    const QJsonArray meta = cmd.value(QStringLiteral("argsMeta")).toArray();
+    QStringList onKeys;
+    for (auto it = values.constBegin(); it != values.constEnd(); ++it) {
+        if (it.value().toString() == QLatin1String("on"))
+            onKeys << it.key();
+    }
+    for (const QString &k : onKeys) {
+        for (const QJsonValue &e : meta) {
+            const QJsonObject m = e.toObject();
+            if (m.value(QStringLiteral("kind")).toString() != QLatin1String("option"))
+                continue;
+            if (!m.value(QStringLiteral("acceptValue")).toBool())
+                continue; // real flag: "on" is its value
+            const QString raw = m.value(QStringLiteral("name")).toString();
+            const QString bare =
+                raw.startsWith(QLatin1String("--")) ? raw.mid(2) : raw;
+            if (k != bare && k != raw)
+                continue;
+            const QString def = m.value(QStringLiteral("default")).toString();
+            if (def.isEmpty())
+                values.remove(k);
+            else
+                values.insert(k, def);
+            break;
+        }
+    }
+}
+
 bool ProjectService::runCommandEffective(const QString &projectRef, const QString &commandRef)
+{
+    return runCommandEffectiveImpl(projectRef, commandRef, QVariantMap());
+}
+
+bool ProjectService::runCommandEffectiveWithValues(const QString &projectRef, const QString &commandRef,
+                                                   const QVariantMap &extraValues)
+{
+    return runCommandEffectiveImpl(projectRef, commandRef, extraValues);
+}
+
+bool ProjectService::runCommandEffectiveImpl(const QString &projectRef, const QString &commandRef,
+                                             const QVariantMap &extraValues)
 {
     QJsonObject project;
     for (const auto &p : m_projects) {
@@ -755,12 +1153,54 @@ bool ProjectService::runCommandEffective(const QString &projectRef, const QStrin
     QString label = cmd.value(QStringLiteral("label")).toString();
     QStringList env;
     bool allowMultiple = false;
-    resolveRunConfig(projectId, commandId, executable, args, workdir, env, allowMultiple);
+    QJsonObject values;
+    resolveRunConfig(projectId, commandId, executable, args, workdir, env, allowMultiple, values);
+    // In-memory values (secrets) win over the stored ones.
+    // Flag-era residue is cleaned from the stored values first (see
+    // sanitizeConsoleValues): overrides below are fresh input.
+    sanitizeConsoleValues(cmd, values);
+    for (auto it = extraValues.constBegin(); it != extraValues.constEnd(); ++it)
+        values.insert(it.key(), QJsonValue::fromVariant(it.value()));
+    // Console records carry argsMeta: the run args are reassembled from
+    // the saved per-arg values. Required positionals still empty block
+    // the launch instead of starting a broken command line.
+    if (cmd.value(QStringLiteral("argsMeta")).isArray()) {
+        QStringList missing;
+        args = assembleConsoleArgs(cmd, values, missing);
+        if (!missing.isEmpty()) {
+            emit runBlocked(commandId, missing);
+            return false;
+        }
+        // Console binaries are PHP scripts: launch through the interpreter
+        // (same as discovery `php bin/console list`) instead of relying on
+        // the shebang/exec bit. A stored executable override is respected.
+        if (executable == cmd.value(QStringLiteral("command")).toString()) {
+            args.prepend(cmd.value(QStringLiteral("command")).toString());
+            executable = QStringLiteral("php");
+        }
+    }
     // Runs are tracked by project-scoped key: bare command ids
     // (npm:serve) repeat across projects. Recent history is recorded from
     // CommandExecutor::started, so every launch path is covered.
     const QString runKey = projectId + u'|' + commandId;
-    return runResolved(runKey, executable, args, workdir, label, env, allowMultiple) > 0;
+    const int runId = runResolved(runKey, executable, args, workdir, label, env, allowMultiple);
+    if (runId > 0) {
+        // Explicit port in the final args (`--port <v>` / `--port=<v>`),
+        // reported once a run actually started.
+        for (int i = 0; i < args.size(); ++i) {
+            int port = 0;
+            const QString &arg = args.at(i);
+            if (arg == QLatin1String("--port") && i + 1 < args.size())
+                port = args.at(i + 1).toInt();
+            else if (arg.startsWith(QLatin1String("--port=")))
+                port = arg.mid(7).toInt();
+            if (port > 0) {
+                emit consoleDetectedPort(commandId, port);
+                break;
+            }
+        }
+    }
+    return runId > 0;
 }
 QString ProjectService::scriptTextOf(const QJsonValue &value)
 {

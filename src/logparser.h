@@ -3,33 +3,34 @@
 #include <QString>
 #include <QStringList>
 
-// Одна разобранная строка лога. покрывает и Console history (со слоем 1),
-// и файловые логи (без слоя 1).
+// One parsed log line. Covers both console history (with layer 1) and
+// file logs (without layer 1).
 struct ParsedLogLine {
-    bool ok = false;           // false = формат не распознан (только substring-поиск)
-    QString layerTimestamp;    // слой 1: [HH:mm:ss.zzz] или Docker-ts; пусто, если нет
-    QString target;            // слой 1: label команды; пусто для файловых логов
-    QString level;             // нормализованный UPPER (WARN -> WARNING)
-    QString channel;           // канал слоя 2; пусто, если формат его не даёт
-    QString message;           // тело: целиком для текстовых форматов, msg-поле для JSON
+    bool ok = false;           // false = format unrecognized (substring search only)
+    QString layerTimestamp;    // layer 1: [HH:mm:ss.zzz] or Docker-ts; empty when absent
+    QString target;            // layer 1: command label; empty for file logs
+    QString level;             // normalized UPPER (WARN -> WARNING)
+    QString channel;           // layer-2 channel; empty when the format gives none
+    QString message;           // body: whole line for text formats, msg field for JSON
 };
 
-// Результат применения фильтров к одной строке (AND; пустой фильтр выключен).
-// Нераспознанная строка участвует только в query: под level/channel она
-// HiddenUnparsed (UI показывает счётчик, MCP молча пропускает).
+// The result of applying filters to one line (AND; an empty filter is off).
+// An unrecognized line takes part in query only: for level/channel purposes
+// it is HiddenUnparsed (the UI shows a counter, MCP skips it silently).
 enum class LogFilterHit { Shown, Hidden, HiddenUnparsed };
 
 struct LogFilterQuery {
     QString query;          // substring, case-insensitive
-    QStringList levels;     // точные совпадения (нормализуются)
-    QStringList channels;   // точные совпадения, case-insensitive
+    QStringList levels;     // exact matches (normalized)
+    QStringList channels;   // exact matches, case-insensitive
 };
 
-// Двухслойный парсер. Порядок проб слоя 2 зафиксирован исследованием
+// Two-layer parser. The layer-2 probe order is fixed by research
 // (.scratch/console-filters/research-log-formats.md): JSON -> Docker-ts ->
 // Monolog(a/b/c) -> uvicorn -> gunicorn-error -> logrus -> tracing/env_logger ->
-// python -> syslog -> access -> fallback. Все regex слоя 2 — после strip SGR.
-// Словари не хардкодятся: известна лишь проверка «похоже на уровень».
+// python -> syslog -> access -> fallback. All layer-2 regexes run after SGR
+// stripping. Dictionaries are not hardcoded: only the "looks like a level"
+// check is known.
 class LogParser {
 public:
     static ParsedLogLine parse(const QString &raw);

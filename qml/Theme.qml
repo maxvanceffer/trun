@@ -2,54 +2,76 @@ pragma Singleton
 import QtQuick
 import QtQuick.Controls
 
-// Design tokens adapted from the shadcn-vue preset:
-// style "reka-mira", base color "olive", Geist Mono (font not bundled).
-// oklch values converted to hex; white overlays composited over dark bg.
-// Deviation from the preset: corners stay 8px (preset specifies radius 0).
+// Design tokens — Nuxt UI v4 "Carbon" theme, 1:1 with the project config:
+//   assets/main.css     (@theme carbon palette + --ui-* semantics + --ui-radius)
+//   assets/app.config.ts (primary: amber, secondary: yellow, neutral: carbon)
+// oklch values converted to hex with culori; --ui-* mappings copied verbatim
+// from main.css (:root,.light and .dark blocks). Accent shades: 500 in light,
+// 400 in dark. Corner scale derives from --ui-radius: 0.5rem.
 QtObject {
     readonly property bool isDark: Application.styleHints.colorScheme === Qt.ColorScheme.Dark
 
-    // Window: light #ffffff / dark #0c0c09
-    readonly property color windowBackground: isDark ? "#0c0c09" : "#ffffff"
-    // Sidebar: light #fbfbf9 / dark #1d1d16
-    readonly property color sidebarBackground: isDark ? "#1d1d16" : "#fbfbf9"
-    // Cards / console / dialogs: light #ffffff / dark #1d1d16
-    readonly property color cardBackground: isDark ? "#1d1d16" : "#ffffff"
+    // ─── Surfaces (--ui-bg-*) ─────────────────────────────────────────
+    // bg-default: the page and the modal surface.
+    readonly property color windowBackground: isDark ? "#292929" : "#fffaee"
+    // bg-elevated: form controls, hover rows, off-state switches.
+    readonly property color mutedSurface: isDark ? "#3d3d3d" : "#f0ccb3"
+    // bg-accented: the hover step above bg-elevated.
+    readonly property color mutedSurfaceHover: isDark ? "#555454" : "#b29a90"
+    // Card subtle (the configured card variant) is `bg-elevated/50` over the
+    // page; composited here so every consumer keeps an opaque surface.
+    // Cards/panels only: Nuxt gives Modal, Tooltip, Select and Dropdown
+    // content `bg-default` — those take backgroundDefault below.
+    readonly property color cardBackground: isDark ? "#333333" : "#f8e3d1"
+    // Sidebar: macOS glass tint, same tone as the page (no --ui- token).
+    readonly property color sidebarBackground: windowBackground
+    // bg-inverted: solid neutral fills.
+    readonly property color backgroundInverted: isDark ? "#fffaee" : "#181818"
 
-    // Text on theme-aware surfaces
-    readonly property color textPrimary: isDark ? "#fbfbf9" : "#0c0c09"
-    readonly property color textMuted: isDark ? "#abab9c" : "#7c7c67"
+    // ─── Text (--ui-text-*) ───────────────────────────────────────────
+    readonly property color textPrimary: isDark ? "#ffe1c1" : "#181818"   // text
+    readonly property color textMuted: isDark ? "#f0ccb3" : "#292929"     // text-muted
+    readonly property color textDimmed: isDark ? "#b29a90" : "#7a706d"    // text-dimmed
+    // Faintest readable text (unselected segments, placeholders). One shade
+    // below textDimmed on the carbon scale; no --ui- token exists.
+    readonly property color textSubtle: isDark ? "#7a706d" : "#b29a90"
+    readonly property color textInverted: isDark ? "#181818" : "#fffaee"  // text-inverted
 
-    // primary: light #fdc700 / dark #f0b100, on-primary #733e0a
-    readonly property color primary: isDark ? "#f0b100" : "#fdc700"
-    readonly property color primaryForeground: "#733e0a"
-    // accent == primary in this preset
-    readonly property color accent: isDark ? "#f0b100" : "#fdc700"
-    readonly property color accentForeground: "#733e0a"
-    // secondary
-    readonly property color secondary: isDark ? "#27272a" : "#f4f4f5"
-    readonly property color secondaryForeground: isDark ? "#fafafa" : "#18181b"
-    // muted surfaces
-    readonly property color mutedSurface: isDark ? "#2b2b22" : "#f4f4f0"
-    // destructive: light #e7000b / dark #ff6467
-    readonly property color destructive: isDark ? "#ff6467" : "#e7000b"
-    // Text on destructive fills (solid buttons): white in both themes,
-    // matching the Nuxt error-solid convention.
-    readonly property color destructiveForeground: "#ffffff"
-    // hairlines: light #e8e8e3 / dark white 10% (#242422)
-    readonly property color border: isDark ? "#242422" : "#e8e8e3"
-    // ring
-    readonly property color ring: isDark ? "#abab9c" : "#7c7c67"
+    // ─── Accents (--ui-<color>): 500 light / 400 dark ─────────────────
+    readonly property color primary: isDark ? "#ffb900" : "#fe9a00"       // amber
+    readonly property color accent: primary                               // accent == primary
+    readonly property color secondary: isDark ? "#fdc700" : "#f0b100"     // yellow
+    readonly property color success: isDark ? "#05df72" : "#00c950"
+    readonly property color info: isDark ? "#51a2ff" : "#2b7fff"
+    readonly property color warning: isDark ? "#fdc700" : "#f0b100"       // yellow
+    readonly property color error: isDark ? "#ff6467" : "#fb2c36"
 
-    readonly property color success: isDark ? "#4ade80" : "#22c55e"
-    readonly property color info: isDark ? "#60a5fa" : "#3b82f6"
-    readonly property color warning: isDark ? "#fbbf24" : "#f59e0b"
-    readonly property color error: isDark ? "#f87171" : "#ef4444"
-    readonly property color textInverted: windowBackground
-    readonly property color backgroundDefault: windowBackground
-    readonly property color backgroundInverted: textPrimary
-    readonly property color backgroundElevated: mutedSurface
-    readonly property color borderAccented: border
+    // ─── Foregrounds on accent fills ──────────────────────────────────
+    // Solid buttons/badges/banners: Nuxt writes `text-inverted bg-<color>`,
+    // but --ui-text-inverted is near-white in light mode — 1.83–3.65:1 on
+    // this palette, so every solid colour fails WCAG AA (4.5:1), while the
+    // dark half of the theme already gets #181818 (6.2–11.3:1). One token,
+    // carbon ink in both modes: 4.66–11.3:1 on all five accents.
+    // Neutral and inverse fills keep text-inverted — those are the dark fills.
+    readonly property color accentForeground: isDark ? textInverted : textPrimary
+    // Readable label for accent-coloured outline/ghost text. Not a Nuxt
+    // token — Nuxt uses `text-<color>` there, which UiButton computes.
+    readonly property color secondaryForeground: textPrimary
+    // AppSwitch knob on a checked track: switch.ts thumb is `bg-default`.
+    readonly property color accentInk: windowBackground
+
+    // ─── Borders & chrome ─────────────────────────────────────────────
+    readonly property color border: isDark ? "#555454" : "#09090b"        // border
+    readonly property color borderAccented: isDark ? "#7a706d" : "#09090b" // border-accented
+    // Focus ring. Nuxt draws it per-colour (`outline-<color>/25`); the app
+    // keeps one neutral indicator, taken from the carbon mid steps.
+    readonly property color ring: isDark ? "#b29a90" : "#7a706d"
+    // Dialog shadow — no --ui- token, kept as a near-black carbon step.
+    readonly property color shadowColor: isDark ? "#09090b" : "#181818"
+
+    // ─── Aliases kept for existing call sites ─────────────────────────
+    readonly property color backgroundDefault: windowBackground           // bg-default
+    readonly property color backgroundElevated: mutedSurface              // bg-elevated
 
     // ─── Layout scale ──────────────────────────────────────────────────
     // Single source of truth for spacing/sizing so paddings stay uniform.
@@ -59,16 +81,17 @@ QtObject {
     readonly property int spacingLg: 16
     readonly property int spacingXl: 24
 
-    readonly property int radiusSm: 6
-    readonly property int radiusMd: 8
-    readonly property int radiusLg: 10
+    // --ui-radius: 0.5rem → rounded-sm 8 / rounded-md 12 / rounded-lg 16
+    readonly property int radiusSm: 8
+    readonly property int radiusMd: 12
+    readonly property int radiusLg: 16
 
     readonly property int iconSm: 16
     readonly property int iconMd: 20
     readonly property int iconLg: 24
     readonly property int iconXs: 12
 
-    // Form controls (UiInput, UiSelectMenu, …): одна высота на весь кит.
+    // Form controls (UiInput, UiSelectMenu, …): one height across the kit.
     readonly property int controlHeight: 32
 
     // Sidebar geometry (shared by the sidebar and the main window layout)
@@ -92,4 +115,30 @@ QtObject {
     readonly property int animSlide: 260
     readonly property int animSlow: 350
     readonly property int easingStandard: Easing.OutCubic
+
+    // ─── Icon resolution ───────────────────────────────────────────────
+    // Single source of icon paths: logical name -> themed file.
+    // No component knows isDark or file names; this function does.
+    // Files follow name.png (light) / name-dark.png (dark); single-variant
+    // icons (no dark twin) are listed explicitly.
+    function icon(name) {
+        var single = {
+            "git-branch": "git-branch.png",
+            "default": "default.png",
+            "npm": "npm.png",
+            "python": "python.png",
+            "java": "java.png",
+            "gradle": "gradle.png",
+            "cmake": "cmake.png",
+            "composer": "composer.png",
+            "ruby": "ruby.png",
+            "elixir": "elixir.png",
+            "postgresql": "postgresql.png",
+            "mysql": "mysql.png",
+            "mongodb": "mongodb.png",
+            "redis": "redis.png"
+        }[name]
+        if (single) return iconBaseUrl + single // qmllint disable unqualified
+        return iconBaseUrl + name + (isDark ? "-dark.png" : ".png") // qmllint disable unqualified
+    }
 }

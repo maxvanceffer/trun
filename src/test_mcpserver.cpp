@@ -261,7 +261,7 @@ void TestMcpServer::testSearchLogsSinceMinutes()
     manifest.close();
     QFile log(fx->home.path() + QStringLiteral("/app/var/log/app.log"));
     QVERIFY(log.open(QIODevice::WriteOnly));
-    // Даты в прошлом относительно времени прогона: узкое окно их отсекает.
+    // Dates in the past relative to the run time: a narrow window cuts them off.
     log.write("[2026-09-10T10:01:00+00:00] app.ERROR: old failure\n");
     log.close();
     fx->service->scanFolder(fx->home.path());

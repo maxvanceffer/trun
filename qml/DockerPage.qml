@@ -1,6 +1,8 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "Ui"
+pragma ComponentBehavior: Bound
 
 // Docker engine (colima / Desktop / OrbStack), containers and images.
 // Logs open inline inside the container card and follow while open.
@@ -8,7 +10,10 @@ Item {
     id: dockerPage
     objectName: "dockerPage"
 
-    readonly property var svc: (typeof dockerService !== "undefined") ? dockerService : null
+    readonly property var dbs: dockerService // qmllint disable unqualified
+    readonly property var lm: logModel // qmllint disable unqualified
+
+    readonly property var svc: (typeof dbs !== "undefined") ? dbs : null
     readonly property var engine: svc ? svc.engine : ({})
     readonly property var containers: svc ? svc.containers : []
     readonly property var images: svc ? svc.images : []
@@ -197,11 +202,11 @@ Item {
                 dockerPage.logsText = logs === "" ? qsTr("(no output)") : logs
         }
         function onLogsError(message) {
-            logModel.add("error", "docker", message)
+            dockerPage.lm.add("error", "docker", message)
         }
         function onErrorMessage(message) {
             dockerPage.pendingRemove = ""
-            logModel.add("error", "docker", message)
+            dockerPage.lm.add("error", "docker", message)
         }
         function onContainersChanged() {
             dockerPage.pendingRemove = ""
@@ -288,47 +293,22 @@ Item {
 
                 Item { Layout.fillWidth: true }
 
-                Button {
+                UiButton {
                     Layout.preferredWidth: 110
-                    Layout.preferredHeight: 30
-                    font.pixelSize: 12
+                    label: qsTr("Cancel")
+                    color: "secondary"
+                    variant: "outline"
+                    size: "sm"
                     onClicked: confirmDialog.close()
-
-                    background: Rectangle {
-                        radius: 6
-                        color: "transparent"
-                        border.color: Theme.border
-                        border.width: 1
-                    }
-
-                    contentItem: Label {
-                        text: qsTr("Cancel")
-                        color: Theme.textPrimary
-                        font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
                 }
 
-                Button {
+                UiButton {
                     Layout.preferredWidth: 110
-                    Layout.preferredHeight: 30
-                    font.pixelSize: 12
+                    label: qsTr("Remove")
+                    color: "error"
+                    variant: "solid"
+                    size: "sm"
                     onClicked: dockerPage.confirmRemove()
-
-                    background: Rectangle {
-                        radius: 6
-                        color: Theme.destructive
-                    }
-
-                    contentItem: Label {
-                        text: qsTr("Remove")
-                        color: Theme.destructiveForeground
-                        font.pixelSize: 12
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
                 }
             }
         }
@@ -390,7 +370,7 @@ Item {
                         anchors.centerIn: parent
                         width: Theme.iconSm
                         height: Theme.iconSm
-                        source: iconBaseUrl + (Theme.isDark ? "rotate-cw-dark.png" : "rotate-cw.png")
+                        source: Theme.icon("refresh")
                         sourceSize.width: 32
                         sourceSize.height: 32
                         fillMode: Image.PreserveAspectFit
@@ -464,7 +444,7 @@ Item {
                             Layout.preferredWidth: 32
                             Layout.preferredHeight: 32
                             Layout.alignment: Qt.AlignVCenter
-                            source: iconBaseUrl + (Theme.isDark ? "docker-dark.png" : "docker.png")
+                            source: Theme.icon("docker")
                             sourceSize.width: 64
                             sourceSize.height: 64
                             fillMode: Image.PreserveAspectFit
@@ -501,19 +481,22 @@ Item {
 
                         Rectangle {
                             Layout.alignment: Qt.AlignVCenter
-                            width: 8
-                            height: 8
+                            Layout.preferredWidth: 8
+                            Layout.preferredHeight: 8
                             radius: 4
-                            color: (dockerPage.engine && dockerPage.engine.available) ? "#22c55e" : Theme.destructive
+                            color: (dockerPage.engine && dockerPage.engine.available) ? Theme.success : Theme.error
                         }
 
-                        Button {
+                        UiButton {
                             Layout.alignment: Qt.AlignVCenter
-                            implicitWidth: 88
-                            implicitHeight: 30
+                            Layout.preferredWidth: 88
                             visible: dockerPage.engine && dockerPage.engine.colimaInstalled === true
                             enabled: dockerPage.svc && !dockerPage.busy
                                 && dockerPage.pendingRemove === ""
+                            label: (dockerPage.engine && dockerPage.engine.colimaRunning) ? qsTr("Stop") : qsTr("Start")
+                            color: "secondary"
+                            variant: "outline"
+                            size: "sm"
                             onClicked: {
                                 if (!dockerPage.svc)
                                     return
@@ -522,48 +505,21 @@ Item {
                                 else
                                     dockerPage.svc.startEngine()
                             }
-
-                            background: Rectangle {
-                                radius: Theme.radiusSm
-                                color: "transparent"
-                                border.color: Theme.border
-                                border.width: 1
-                            }
-
-                            contentItem: Label {
-                                text: (dockerPage.engine && dockerPage.engine.colimaRunning) ? qsTr("Stop") : qsTr("Start")
-                                color: Theme.secondaryForeground
-                                font.pixelSize: Theme.fontSizeMd
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
                         }
 
-                        Button {
+                        UiButton {
                             Layout.alignment: Qt.AlignVCenter
-                            implicitWidth: 88
-                            implicitHeight: 30
+                            Layout.preferredWidth: 88
                             visible: dockerPage.engine && dockerPage.engine.available === true
                             enabled: dockerPage.svc && !dockerPage.busy
                                 && dockerPage.pendingRemove === ""
+                            label: qsTr("Prune")
+                            color: "secondary"
+                            variant: "outline"
+                            size: "sm"
                             onClicked: {
                                 if (dockerPage.svc)
                                     dockerPage.svc.prune()
-                            }
-
-                            background: Rectangle {
-                                radius: Theme.radiusSm
-                                color: "transparent"
-                                border.color: Theme.border
-                                border.width: 1
-                            }
-
-                            contentItem: Label {
-                                text: qsTr("Prune")
-                                color: Theme.secondaryForeground
-                                font.pixelSize: Theme.fontSizeMd
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
                             }
                         }
                     }
@@ -599,15 +555,12 @@ Item {
             Component {
                 id: containerDelegate
 
-                Rectangle {
+                UiListElement {
                     id: containerCard
                     required property var modelData
                     width: parent.width
                     height: inner.implicitHeight + 2 * Theme.spacingMd
-                    radius: Theme.radiusMd
-                    color: Theme.cardBackground
-                    border.width: 1
-                    border.color: Theme.border
+                    clickable: false
 
                     ColumnLayout {
                         id: inner
@@ -644,7 +597,7 @@ Item {
                                     visible: dockerPage.statsText(containerCard.modelData.name) !== ""
                                     Layout.fillWidth: true
                                     text: dockerPage.statsText(containerCard.modelData.name)
-                                    color: "#22c55e"
+                                    color: Theme.success
                                     font.pixelSize: Theme.fontSizeSm
                                     elide: Text.ElideRight
                                 }
@@ -680,18 +633,21 @@ Item {
 
                             Rectangle {
                                 Layout.alignment: Qt.AlignVCenter
-                                width: 8
-                                height: 8
+                                Layout.preferredWidth: 8
+                                Layout.preferredHeight: 8
                                 radius: 4
-                                color: containerCard.modelData.running ? "#22c55e" : Theme.destructive
+                                color: containerCard.modelData.running ? Theme.success : Theme.error
                             }
 
-                            Button {
+                            UiButton {
                                 Layout.alignment: Qt.AlignVCenter
-                                implicitWidth: 76
-                                implicitHeight: 30
+                                Layout.preferredWidth: 76
                                 enabled: dockerPage.svc && !dockerPage.busy
                                     && dockerPage.pendingRemove === ""
+                                label: containerCard.modelData.running ? qsTr("Stop") : qsTr("Start")
+                                color: "secondary"
+                                variant: "outline"
+                                size: "sm"
                                 onClicked: {
                                     if (!dockerPage.svc)
                                         return
@@ -700,46 +656,17 @@ Item {
                                     else
                                         dockerPage.svc.startContainer(containerCard.modelData.name)
                                 }
-
-                                background: Rectangle {
-                                    radius: Theme.radiusSm
-                                    color: "transparent"
-                                    border.color: Theme.border
-                                    border.width: 1
-                                }
-
-                                contentItem: Label {
-                                    text: containerCard.modelData.running ? qsTr("Stop") : qsTr("Start")
-                                    color: Theme.secondaryForeground
-                                    font.pixelSize: Theme.fontSizeMd
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
                             }
 
-                            Button {
+                            UiButton {
                                 Layout.alignment: Qt.AlignVCenter
-                                implicitWidth: 76
-                                implicitHeight: 30
+                                Layout.preferredWidth: 76
                                 enabled: dockerPage.svc && !dockerPage.busy
+                                label: qsTr("Logs")
+                                color: "secondary"
+                                variant: "outline"
+                                size: "sm"
                                 onClicked: dockerPage.toggleLogs(containerCard.modelData.name)
-
-                                background: Rectangle {
-                                    radius: Theme.radiusSm
-                                    color: dockerPage.openLogsFor === containerCard.modelData.name
-                                        ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.25)
-                                        : "transparent"
-                                    border.color: Theme.border
-                                    border.width: 1
-                                }
-
-                                contentItem: Label {
-                                    text: qsTr("Logs")
-                                    color: Theme.secondaryForeground
-                                    font.pixelSize: Theme.fontSizeMd
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
                             }
                         }
 
@@ -750,54 +677,30 @@ Item {
 
                             Item { Layout.fillWidth: true }
 
-                            Button {
+                            UiButton {
                                 Layout.alignment: Qt.AlignVCenter
-                                implicitWidth: 88
-                                implicitHeight: 30
+                                Layout.preferredWidth: 88
                                 enabled: dockerPage.svc && !dockerPage.busy
                                     && dockerPage.pendingRemove === ""
+                                label: qsTr("Restart")
+                                color: "secondary"
+                                variant: "outline"
+                                size: "sm"
                                 onClicked: dockerPage.svc.restartContainer(containerCard.modelData.name)
-
-                                background: Rectangle {
-                                    radius: Theme.radiusSm
-                                    color: "transparent"
-                                    border.color: Theme.border
-                                    border.width: 1
-                                }
-
-                                contentItem: Label {
-                                    text: qsTr("Restart")
-                                    color: Theme.secondaryForeground
-                                    font.pixelSize: Theme.fontSizeMd
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
                             }
 
-                            Button {
+                            UiButton {
                                 visible: dockerPage.pendingRemove !== containerCard.modelData.name
                                 Layout.alignment: Qt.AlignVCenter
-                                implicitWidth: 88
-                                implicitHeight: 30
+                                Layout.preferredWidth: 88
                                 enabled: dockerPage.svc && !dockerPage.busy
                                     && dockerPage.pendingRemove === ""
+                                label: qsTr("Remove")
+                                color: "error"
+                                variant: "outline"
+                                size: "sm"
                                 onClicked: dockerPage.askRemove("container",
                                     containerCard.modelData.name, containerCard.modelData.name)
-
-                                background: Rectangle {
-                                    radius: Theme.radiusSm
-                                    color: "transparent"
-                                    border.color: Theme.border
-                                    border.width: 1
-                                }
-
-                                contentItem: Label {
-                                    text: qsTr("Remove")
-                                    color: Theme.destructive
-                                    font.pixelSize: Theme.fontSizeMd
-                                    horizontalAlignment: Text.AlignHCenter
-                                    verticalAlignment: Text.AlignVCenter
-                                }
                             }
 
                             BusyLabel {
@@ -968,15 +871,12 @@ Item {
             Repeater {
                 model: dockerPage.images
 
-                delegate: Rectangle {
+                delegate: UiListElement {
                     id: imageCard
                     required property var modelData
                     width: parent.width
                     height: 64
-                    radius: Theme.radiusMd
-                    color: Theme.cardBackground
-                    border.width: 1
-                    border.color: Theme.border
+                    clickable: false
 
                     RowLayout {
                         anchors.fill: parent
@@ -1004,30 +904,18 @@ Item {
                             }
                         }
 
-                        Button {
+                        UiButton {
                             visible: dockerPage.pendingRemove !== imageCard.modelData.id
                             Layout.alignment: Qt.AlignVCenter
-                            implicitWidth: 88
-                            implicitHeight: 30
+                            Layout.preferredWidth: 88
                             enabled: dockerPage.svc && !dockerPage.busy
                                 && dockerPage.pendingRemove === ""
+                            label: qsTr("Remove")
+                            color: "error"
+                            variant: "outline"
+                            size: "sm"
                             onClicked: dockerPage.askRemove("image", imageCard.modelData.id,
                                 dockerPage.imageTitle(imageCard.modelData))
-
-                            background: Rectangle {
-                                radius: Theme.radiusSm
-                                color: "transparent"
-                                border.color: Theme.border
-                                border.width: 1
-                            }
-
-                            contentItem: Label {
-                                text: qsTr("Remove")
-                                color: Theme.destructive
-                                font.pixelSize: Theme.fontSizeMd
-                                horizontalAlignment: Text.AlignHCenter
-                                verticalAlignment: Text.AlignVCenter
-                            }
                         }
 
                         BusyLabel {

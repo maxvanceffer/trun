@@ -51,6 +51,10 @@ private:
 
     QJsonObject findProject(const QString &ref) const;
     QJsonObject findCommand(const QJsonObject &project, const QString &commandRef) const;
+    // Saved per-arg values of a command's run config
+    // (settings key runConfig/<projectId>/<commandId> -> "argsValues").
+    // Empty object when the key is absent or not valid JSON.
+    QJsonObject savedArgValues(const QString &projectId, const QString &commandId) const;
     // Bare ids ("npm:serve") predate project scoping: exact full-key match
     // wins, one "|bare" suffix match resolves, several are ambiguous.
     QString resolveCommandKey(const QString &ref, const QStringList &known,
@@ -66,9 +70,22 @@ private:
     QString m_error;
     QMap<QString, QList<LogLine>> m_logs;
     QMap<QString, int> m_runtimePorts; // run key -> port sniffed from output URLs
+    // Bare command id -> port found in console args (`--port <v>`): the
+    // consoleDetectedPort signal carries unscoped ids, m_runtimePorts is
+    // keyed by run key ("projectId|commandId").
+    QMap<QString, int> m_consolePorts;
+    // Run-gating state captured while ProjectService::runCommandEffective
+    // runs (runBlocked is emitted synchronously inside that call).
+    bool m_runBlocked = false;
+    QString m_blockedCommandId;
+    QStringList m_blockedMissing;
+    // Own sequence for the `run` ack: runCommandEffective reports only
+    // success, and CommandExecutor's id arrives asynchronously with
+    // QProcess::started, so it cannot go into the reply.
+    int m_runSeq = 0;
     static constexpr int kMaxLogLines = 2000;
 
-    // Структурный поиск поверх LogParser (общий с UI движок AND-фильтров).
+    // Structured search on top of LogParser (the AND-filter engine shared with the UI).
     static QString resultHeader(int matched, int total, const QStringList &levels,
                                 const QStringList &channels, bool truncated);
     static QDateTime parsedTimestamp(const ParsedLogLine &p);

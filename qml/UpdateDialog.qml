@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
+import "Ui"
 
 // Software update dialog driven by the `updater` context object.
 // Rendered inside the window via Dialog, never as a separate Window.
@@ -23,7 +24,7 @@ Dialog {
         Rectangle {
             anchors.fill: parent
             radius: 8
-            color: Qt.alpha(Theme.cardBackground, 0.96)
+            color: Qt.alpha(Theme.backgroundDefault, 0.96) // modal: bg-default
             border.color: Theme.border
             border.width: 1
         }
@@ -179,7 +180,7 @@ Dialog {
         Label {
             visible: updater.state === "error"
             text: updater.errorString
-            color: "#f87171"
+            color: Theme.error
             font.pixelSize: 12
             wrapMode: Text.WordWrap
             Layout.fillWidth: true
@@ -198,134 +199,65 @@ Dialog {
 
             Item { Layout.fillWidth: true }
 
-            Button {
+            UiButton {
                 visible: updater.state === "downloading"
-                text: qsTr("Cancel")
+                label: qsTr("Cancel")
                 Layout.preferredWidth: 110
-                Layout.preferredHeight: 30
-                font.pixelSize: 12
-                background: Rectangle {
-                    radius: 6
-                    color: "transparent"
-                    border.color: Theme.border
-                    border.width: 1
-                }
-                contentItem: Label {
-                    text: parent.text
-                    color: Theme.textPrimary
-                    font.pixelSize: 12
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
+                color: "secondary"
+                variant: "outline"
+                size: "sm"
                 onClicked: updater.cancelDownload()
             }
 
-            Button {
+            UiButton {
                 visible: updater.state === "error"
                     || (updater.state === "available" && updater.downloadUrl === "")
                     || (updater.state === "ready" && !updater.canInstall)
-                text: qsTr("Open release page")
+                label: qsTr("Open release page")
                 Layout.preferredWidth: 140
-                Layout.preferredHeight: 30
-                font.pixelSize: 12
-                background: Rectangle {
-                    radius: 6
-                    color: "transparent"
-                    border.color: Theme.border
-                    border.width: 1
-                }
-                contentItem: Label {
-                    text: parent.text
-                    color: Theme.textPrimary
-                    font.pixelSize: 12
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
+                color: "secondary"
+                variant: "outline"
+                size: "sm"
                 onClicked: updater.openReleasesPage()
             }
 
-            Button {
+            UiButton {
                 visible: updater.state === "available" && updater.downloadUrl !== ""
-                text: qsTr("Download update")
+                label: qsTr("Download update")
                 Layout.preferredWidth: 140
-                Layout.preferredHeight: 30
-                font.pixelSize: 12
-                background: Rectangle {
-                    radius: 6
-                    color: Theme.accent
-                }
-                contentItem: Label {
-                    text: parent.text
-                    color: Theme.accentForeground
-                    font.pixelSize: 12
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
+                color: "primary"
+                variant: "solid"
+                size: "sm"
                 onClicked: updater.downloadUpdate()
             }
 
-            Button {
+            UiButton {
                 visible: updater.state === "ready" && updater.canInstall
-                text: qsTr("Restart & install")
+                label: qsTr("Restart & install")
                 Layout.preferredWidth: 140
-                Layout.preferredHeight: 30
-                font.pixelSize: 12
-                background: Rectangle {
-                    radius: 6
-                    color: Theme.accent
-                }
-                contentItem: Label {
-                    text: parent.text
-                    color: Theme.accentForeground
-                    font.pixelSize: 12
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
+                color: "primary"
+                variant: "solid"
+                size: "sm"
                 onClicked: updater.installAndRestart()
             }
 
-            Button {
+            UiButton {
                 visible: updater.state === "error"
-                text: qsTr("Retry")
+                label: qsTr("Retry")
                 Layout.preferredWidth: 110
-                Layout.preferredHeight: 30
-                font.pixelSize: 12
-                background: Rectangle {
-                    radius: 6
-                    color: Theme.accent
-                }
-                contentItem: Label {
-                    text: parent.text
-                    color: Theme.accentForeground
-                    font.pixelSize: 12
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
+                color: "primary"
+                variant: "solid"
+                size: "sm"
                 onClicked: updater.checkForUpdates()
             }
 
-            Button {
+            UiButton {
                 visible: updater.state !== "downloading" && updater.state !== "installing"
-                text: qsTr("Close")
+                label: qsTr("Close")
                 Layout.preferredWidth: 110
-                Layout.preferredHeight: 30
-                font.pixelSize: 12
-                background: Rectangle {
-                    radius: 6
-                    color: "transparent"
-                    border.color: Theme.border
-                    border.width: 1
-                }
-                contentItem: Label {
-                    text: parent.text
-                    color: Theme.textPrimary
-                    font.pixelSize: 12
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
+                color: "secondary"
+                variant: "outline"
+                size: "sm"
                 onClicked: updateDialog.close()
             }
         }

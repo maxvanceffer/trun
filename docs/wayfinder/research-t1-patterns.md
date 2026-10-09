@@ -1,63 +1,63 @@
-# T1 — Паттерны для ApiService: findings
+# T1 — Patterns for ApiService: findings
 
-Тикет: `docs/wayfinder/t1-patterns.md`. Map: `docs/wayfinder/api-saved-requests-map.md`.
-Только факты + указатели `файл:строка`. Кода реализации здесь нет.
+Ticket: `docs/wayfinder/t1-patterns.md`. Map: `docs/wayfinder/api-saved-requests-map.md`.
+Facts only + `file:line` pointers. No implementation code here.
 
-## 1. C++-сервис с работой вне GUI-потока
+## 1. A C++ service that works off the GUI thread
 
-Канонический паттерн — `QThread::create` + `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` + `deleteLater` потока:
+The canonical pattern is `QThread::create` + `QMetaObject::invokeMethod(..., Qt::QueuedConnection)` + the thread's `deleteLater`:
 
-- `src/databaseservice.cpp:21-46` — `refresh()`: guard `if (m_busy) return`, выставление `busy`/`scanning` + emit, вся блокирующая работа (`detectDatabaseServices()`) в `QThread::create`, возврат в GUI-поток через `invokeMethod`, `connect(thread, &QThread::finished, thread, &QObject::deleteLater)` + `thread->start()`.
-- `src/databaseservice.cpp:48-82` — `control(id, start)`: тот же паттерн + `controllingId` для per-row busy-индикатора вместо глобального спиннера.
-- `src/databaseservice.cpp:104-131` — `runQuery()`: блокирующий вызов в потоке, результат наружу через сигнал `queryResult` (сигналы объявлены `src/databaseservice.h:47-58`).
-- `src/databaseservice.cpp:133-158` — `fetchDetail()`: несколько backend-вызовов (порты, БД, connection config) собираются в один `QVariantMap detail` в одном фоновом проходе, наружу — один сигнал `detailReady(id, detail)`. Образец для «собрать request detail за один проход».
-- `src/databaseservice.cpp:160-175`, `:193-213` — `saveConnection` / `testServiceConnection`: сохранение и тест тоже уходят с GUI-потока; комментарий `:41` фиксирует контракт «password null = keep existing secret».
-- `src/dockerservice.cpp:278-308` — `refresh()`: тот же паттерн; `:285-304` — правило «failed query keeps cached data» (при `!ok` старые данные не затираются, наружу `errorMessage`).
-- `src/dockerservice.cpp:310-343` — `control(args, quiet=false)`: `quiet`-операции (`removeImage`, `src/dockerservice.cpp:377-381`) пропускают глобальный `busy`, UI трекает их per-item через `pendingRemove` (`qml/DockerPage.qml:28-29`).
-- `src/dockerservice.cpp:468-488`, `:490-510` — `fetchStats`/`fetchLogs`: защита от наложения поллов через `std::atomic<bool>` (`m_statsBusy`/`m_logsBusy`, объявлены `src/dockerservice.h:90-91`), `fetchStats` deliberately не трогает `busy` (`src/dockerservice.h:44-47`).
-- `src/dockerservice.h:49-62` — статические синхронные `queryEngine/queryContainers/...` для headless-потребителей (MCP); комментарий требует вызывать их вне GUI-потока.
-- Контраст: `CommandExecutor` (`src/commandexecutor.h:18-23`, сигналы `:73-80`) НЕ использует `QThread::create` — он обёрнут вокруг асинхронного `QProcess` (сигналы `started/outputReceived/finished/failed`). Для сетевого `ApiService` релевантен именно `QThread::create`-паттерн Database/Docker-сервисов.
-- QML-сторона подписывается через `Connections { target: svc }`: `qml/DockerPage.qml:198-217`, `qml/DatabasesPage.qml:238-276`.
+- `src/databaseservice.cpp:21-46` — `refresh()`: guard `if (m_busy) return`, set `busy`/`scanning` + emit, all blocking work (`detectDatabaseServices()`) in `QThread::create`, return to the GUI thread via `invokeMethod`, `connect(thread, &QThread::finished, thread, &QObject::deleteLater)` + `thread->start()`.
+- `src/databaseservice.cpp:48-82` — `control(id, start)`: the same pattern + `controllingId` for a per-row busy indicator instead of a global spinner.
+- `src/databaseservice.cpp:104-131` — `runQuery()`: a blocking call in the thread, the result out via the `queryResult` signal (signals declared in `src/databaseservice.h:47-58`).
+- `src/databaseservice.cpp:133-158` — `fetchDetail()`: several backend calls (ports, DBs, connection config) collected into a single `QVariantMap detail` in one background pass, out via a single `detailReady(id, detail)` signal. A model for "collect request detail in one pass".
+- `src/databaseservice.cpp:160-175`, `:193-213` — `saveConnection` / `testServiceConnection`: saving and testing also leave the GUI thread; the comment at `:41` pins the contract "password null = keep existing secret".
+- `src/dockerservice.cpp:278-308` — `refresh()`: the same pattern; `:285-304` — the "failed query keeps cached data" rule (on `!ok` old data is not overwritten, `errorMessage` goes out).
+- `src/dockerservice.cpp:310-343` — `control(args, quiet=false)`: `quiet` operations (`removeImage`, `src/dockerservice.cpp:377-381`) skip the global `busy`; the UI tracks them per item via `pendingRemove` (`qml/DockerPage.qml:28-29`).
+- `src/dockerservice.cpp:468-488`, `:490-510` — `fetchStats`/`fetchLogs`: protection against overlapping polls via `std::atomic<bool>` (`m_statsBusy`/`m_logsBusy`, declared in `src/dockerservice.h:90-91`), `fetchStats` deliberately does not touch `busy` (`src/dockerservice.h:44-47`).
+- `src/dockerservice.h:49-62` — static synchronous `queryEngine/queryContainers/...` for headless consumers (MCP); the comment requires calling them off the GUI thread.
+- Contrast: `CommandExecutor` (`src/commandexecutor.h:18-23`, signals `:73-80`) does NOT use `QThread::create` — it wraps an asynchronous `QProcess` (signals `started/outputReceived/finished/failed`). For a networked `ApiService`, the relevant pattern is the `QThread::create` one from the Database/Docker services.
+- The QML side subscribes via `Connections { target: svc }`: `qml/DockerPage.qml:198-217`, `qml/DatabasesPage.qml:238-276`.
 
-## 2. Lazy-создание / первый refresh при открытии страницы
+## 2. Lazy creation / first refresh on page open
 
-Важная находка: **Loader для Docker/Databases-страниц НЕ используется**. `Loader` в приложении один — `qml/main.qml:268-279` (одноразовый `WizardWindow` при `projectCount === 0`). Обе страницы — постоянные инстансы внутри `pageHost`, переключаются видимостью:
+An important finding: **a Loader is NOT used for the Docker/Databases pages**. There is exactly one `Loader` in the app — `qml/main.qml:268-279` (a one-shot `WizardWindow` when `projectCount === 0`). Both pages are permanent instances inside `pageHost`, switched by visibility:
 
-- `qml/Dashboard.qml:2153-2188` — обёртки `databasesPageWrap` / `dockerPageWrap`: `enabled` + `visible: opacity > 0` + `opacity`/`x` с анимациями `Theme.animMedium`/`animSlide`. «Lazy» означает ленивую загрузку *данных*, а не создание QML.
-- Данные греются заранее: конструкторы обоих сервисов сразу зовут `refresh()` (`src/databaseservice.cpp:15-19`, `src/dockerservice.cpp:253-257` — «Scan once at startup (off the GUI thread) so the page has data cached»).
-- `qml/DockerPage.qml:946-949` — `Component.onCompleted`: условный `refresh()` только если список пуст и не `busy`.
-- `qml/DockerPage.qml:25`, `:231-240` — `pageActive` (прокинут из Dashboard `qml/Dashboard.qml:2186`): 5-секундный `fetchStats`-полл идёт только пока страница открыта (`triggeredOnStart: true`); соседний таймер `:220-228` дотягивает логи пока открыта карточка.
-- `qml/DatabasesPage.qml:39-42`, `:70-88` — двухуровневая навигация `selectedIndex` (-1 = список); `onSelectedIndexChanged` сбрасывает `detail` и зовёт `db.fetchDetail(svc.id)`; комментарий `:77-81` объясняет чтение `services[selectedIndex]` напрямую вместо computed-свойства (stale binding в том же тике).
-- `qml/Dashboard.qml:494-505` — `openDatabases()` сбрасывает `databasesPage.selectedIndex = -1` (возврат всегда на уровень списка), `openDocker()` только ставит `activePage`. Обе зовут `closeDetail()` первой строкой.
-- Вывод для ApiService: переиспользовать «постоянный инстанс + ленивые данные» (конструктор-`refresh`, условный refresh в `onCompleted`, `pageActive`-гейт для поллов, сброс внутреннего индекса в `openApi`), а не вводить `Loader`.
+- `qml/Dashboard.qml:2153-2188` — the `databasesPageWrap` / `dockerPageWrap` wrappers: `enabled` + `visible: opacity > 0` + `opacity`/`x` with `Theme.animMedium`/`animSlide` animations. "Lazy" means lazy *data* loading, not QML creation.
+- Data is warmed ahead: the constructors of both services call `refresh()` immediately (`src/databaseservice.cpp:15-19`, `src/dockerservice.cpp:253-257` — "Scan once at startup (off the GUI thread) so the page has data cached").
+- `qml/DockerPage.qml:946-949` — `Component.onCompleted`: a conditional `refresh()` only if the list is empty and not `busy`.
+- `qml/DockerPage.qml:25`, `:231-240` — `pageActive` (passed from Dashboard at `qml/Dashboard.qml:2186`): the 5-second `fetchStats` poll runs only while the page is open (`triggeredOnStart: true`); the neighboring timer `:220-228` keeps pulling logs while a card is open.
+- `qml/DatabasesPage.qml:39-42`, `:70-88` — two-level navigation `selectedIndex` (-1 = list); `onSelectedIndexChanged` resets `detail` and calls `db.fetchDetail(svc.id)`; the comment `:77-81` explains reading `services[selectedIndex]` directly instead of a computed property (stale binding in the same tick).
+- `qml/Dashboard.qml:494-505` — `openDatabases()` resets `databasesPage.selectedIndex = -1` (always returns to the list level), `openDocker()` only sets `activePage`. Both call `closeDetail()` on the first line.
+- Conclusion for ApiService: reuse "permanent instance + lazy data" (constructor `refresh`, conditional refresh in `onCompleted`, `pageActive` gate for polls, reset of the internal index in `openApi`), rather than introducing a `Loader`.
 
-## 3. Хранение структур в Settings, секретов в Keychain
+## 3. Storing structures in Settings, secrets in Keychain
 
-Три слоя, от общего к частному:
+Three layers, from general to specific:
 
-- `Settings` (`src/settings.h:9-46`, `src/settings.cpp:15-47`) — тонкая обёртка над `QSettings` (IniFormat в тестах — `:9-13`): `get/set/has/remove` доступны из QML (`Q_INVOKABLE`), каждый `set/remove` делает `sync()` сразу.
-- JSON-в-строке — стандартный способ хранить структуры: `customCommands` (`src/projectservice.cpp:100-125`: `QJsonDocument(arr).toJson(Compact)` в строку при записи, `QJsonDocument::fromJson(raw).array()` при чтении), `pinnedCommands` / `recentCommands` (`src/projectservice.cpp:699-744` по grep: ключи `pinnedCommands`, `recentCommands`), `projects` как `QByteArray` (`src/settings.cpp:99-113`), `orphanedProcesses` как `QVariantList` (`src/main.cpp:125-142`).
-- Ключи вида `runConfig/<projectId>/<cmdId>` (`src/projectservice.cpp:684`, `:919` по grep) — образец namespaced-ключей; пригодится для `api/...` неймспейса.
-- QML-доступ к Settings: `qml/main.qml:110-141` (`has/get/set/remove`, включая персист `orphanedProcesses` при выходе), `qml/SettingsDialog.qml:129,179,229,237`.
-- Несекретный connection config — прямой `QSettings`-group (мимо `Settings`-класса): группа `DatabaseConnections/<serviceId>` (`src/databaseservice_macos.cpp:244-248`), только не-секретные поля `host/user/database/sslmode/authMethod` (`:268-279`), сохранение `:973-988`, удаление `:990-1003`.
-- Секреты — только Keychain, никогда в Settings: нативный Security-framework без `security` CLI (`src/mackeychain.h:1-14` — обоснование: пароль в argv виден через `ps`), обёртки `keychainFindPassword/Save/Delete` (`src/databaseservice_macos.cpp:283-296`), service label `trun.db.<engine>[@version]` (`:250-259`), account = user или `$USER` (`:261-265`), сборка резолва `resolveConnection` (`:312-326`), флаг `hasSavedPassword` наружу (`:962-971`).
-- Linux-заглушка: `src/databaseservice_linux.cpp:33` — `connectionConfig` там же по контракту `src/databaseservice_backend.h:38-58`; хранение пароля на Linux — no-op до Secret Service backend (контракт `:44-47`).
-- `src/databaseservice_backend.h:19-68` — весь backend-контракт (detect/control/ports/databases/config/save/forget/test/query) как образец разделения «QObject-сервис ↔ платформенный backend».
+- `Settings` (`src/settings.h:9-46`, `src/settings.cpp:15-47`) — a thin wrapper over `QSettings` (IniFormat in tests — `:9-13`): `get/set/has/remove` are available from QML (`Q_INVOKABLE`), each `set/remove` calls `sync()` immediately.
+- JSON-in-a-string is the standard way to store structures: `customCommands` (`src/projectservice.cpp:100-125`: `QJsonDocument(arr).toJson(Compact)` to a string on write, `QJsonDocument::fromJson(raw).array()` on read), `pinnedCommands` / `recentCommands` (`src/projectservice.cpp:699-744` by grep: keys `pinnedCommands`, `recentCommands`), `projects` as a `QByteArray` (`src/settings.cpp:99-113`), `orphanedProcesses` as a `QVariantList` (`src/main.cpp:125-142`).
+- Keys like `runConfig/<projectId>/<cmdId>` (`src/projectservice.cpp:684`, `:919` by grep) — a model for namespaced keys; useful for the `api/...` namespace.
+- QML access to Settings: `qml/main.qml:110-141` (`has/get/set/remove`, including persisting `orphanedProcesses` on exit), `qml/SettingsDialog.qml:129,179,229,237`.
+- The non-secret connection config is a direct `QSettings` group (bypassing the `Settings` class): group `DatabaseConnections/<serviceId>` (`src/databaseservice_macos.cpp:244-248`), only non-secret fields `host/user/database/sslmode/authMethod` (`:268-279`), save `:973-988`, remove `:990-1003`.
+- Secrets only in Keychain, never in Settings: the native Security framework without the `security` CLI (`src/mackeychain.h:1-14` — rationale: a password in argv is visible via `ps`), the wrappers `keychainFindPassword/Save/Delete` (`src/databaseservice_macos.cpp:283-296`), service label `trun.db.<engine>[@version]` (`:250-259`), account = user or `$USER` (`:261-265`), the resolve assembly `resolveConnection` (`:312-326`), the `hasSavedPassword` flag outward (`:962-971`).
+- Linux stub: `src/databaseservice_linux.cpp:33` — `connectionConfig` there too per the contract `src/databaseservice_backend.h:38-58`; storing a password on Linux is a no-op until a Secret Service backend (contract `:44-47`).
+- `src/databaseservice_backend.h:19-68` — the whole backend contract (detect/control/ports/databases/config/save/forget/test/query) as a model for splitting "QObject service ↔ platform backend".
 
-## 4. Регистрация сервиса в main.cpp и проброс в QML
+## 4. Registering the service in main.cpp and exposing it to QML
 
-- `#include` + статические инстансы на время жизни приложения: `src/main.cpp:21-22`, `:113-114` (`static auto databaseService = new DatabaseService()` — сервисы сами греют кэш в конструкторе, см. п.2).
-- Проброс: `engine.rootContext()->setContextProperty("databaseService", databaseService)` (`src/main.cpp:148-149`); `Settings` — под именем `"Settings"` (`:152`).
-- QML-сторона берёт контекст через `readonly property var` + `typeof`-guard для standalone-загрузки в тестах: `qml/DockerPage.qml:13-22` (`readonly property var svc: (typeof dbs !== "undefined") ? dbs : null`, дальше все чтения через `svc ? ... : fallback`), тот же guard в `qml/DatabasesPage.qml:16-25` и `qml/Dashboard.qml:47,50`.
-- Не-GUI зависимости иконок/путей рядом: резолв `iconsPath` с fallback-цепочкой (`src/main.cpp:156-177`), загрузка QML dev-файл → `qrc:/qml/main.qml` fallback (`:183-192`). По AGENTS.md ресурсы только через `qrc:/`.
+- `#include` + static instances for the app lifetime: `src/main.cpp:21-22`, `:113-114` (`static auto databaseService = new DatabaseService()` — the services warm their cache in the constructor, see §2).
+- Exposure: `engine.rootContext()->setContextProperty("databaseService", databaseService)` (`src/main.cpp:148-149`); `Settings` — under the name `"Settings"` (`:152`).
+- The QML side takes context via `readonly property var` + a `typeof` guard for standalone loading in tests: `qml/DockerPage.qml:13-22` (`readonly property var svc: (typeof dbs !== "undefined") ? dbs : null`, then all reads via `svc ? ... : fallback`), the same guard in `qml/DatabasesPage.qml:16-25` and `qml/Dashboard.qml:47,50`.
+- Non-GUI icon/path dependencies nearby: `iconsPath` resolution with a fallback chain (`src/main.cpp:156-177`), QML loading dev file → `qrc:/qml/main.qml` fallback (`:183-192`). Per AGENTS.md, resources only via `qrc:/`.
 
-## 5. Расширение Sidebar + Dashboard activePage + breadcrumb под новый раздел
+## 5. Extending Sidebar + Dashboard activePage + breadcrumb for a new section
 
-Цепочка из 4 мест (порядок копирования под API):
+A chain of 4 places (copy order for API):
 
-1. `qml/Sidebar.qml:34-44` — сигналы `databasesRequested` / `dockerRequested`; блоки `databasesHeader` (`:140-196`) и `dockerHeader` (`:198-254`) — эталонный шаблон (Image `Theme.icon(...)` + Label + hover-Rectangle + MouseArea). Якорная цепочка: `dashboardRow → databasesHeader → dockerHeader → sectionHeader` (`:256-263` — `sectionHeader` привязан к `dockerHeader.bottom`, новый блок вставляется между, цепочка сдвигается).
-2. `qml/main.qml:304-311` — `onDatabasesRequested` / `onDockerRequested` → `root.activeView = "dashboard"` + `dashboardView.openDatabases()/openDocker()`; рядом `:290-303` паттерн `onFolderSelected`.
-3. `qml/Dashboard.qml:444` — `activePage` со значениями `"dashboard"/"folder"/"detail"/"databases"/"docker"`; `openDatabases/openDocker` (`:494-505`); page wrap по образцу `:2153-2188`; `markHitTest` (`:526-548`) — новый crumb-Label нужно добавить в `controls`, иначе клики съест title-bar agent (null-guard обязателен — QWindowKit ASSERT-abort).
-4. Breadcrumb: сегменты `Databases` (`:870-910`, включая 3-й сегмент выбранного сервиса) и `Docker` (`:912-924`) с `visible: activePage === "..."`; кликабельный возврат в список (`:885-890`).
-- Регистрация новой QML-страницы в двух местах: `qml.qrc:29-31` (`DatabasesPage.qml`, `ConnectionDialog.qml`, `DockerPage.qml` в `<qresource prefix="/">`) и `CMakeLists.txt:87-89` (`QML_FILES` в `qt_add_qml_module`); C++-файлы сервиса — в `qt_add_executable` (`:49-52`) + платформенные `.mm` (`:173-178`).
-- Иконка раздела: `Theme.icon(name)` (`qml/Theme.qml:112-131`) — `iconBaseUrl + name + (-dark).png`, одно-вариантные в `single`-map; файлы в `qml.qrc:48-121` (`database(-dark).png` `:113-114`, `docker(-dark).png` `:115-116`); `Theme.icon("docker")` используется в `qml/Sidebar.qml:230` и `qml/DockerPage.qml:447`.
+1. `qml/Sidebar.qml:34-44` — the `databasesRequested` / `dockerRequested` signals; the `databasesHeader` (`:140-196`) and `dockerHeader` (`:198-254`) blocks — the reference template (Image `Theme.icon(...)` + Label + hover Rectangle + MouseArea). The anchor chain: `dashboardRow → databasesHeader → dockerHeader → sectionHeader` (`:256-263` — `sectionHeader` is anchored to `dockerHeader.bottom`; insert the new block between, and the chain shifts).
+2. `qml/main.qml:304-311` — `onDatabasesRequested` / `onDockerRequested` → `root.activeView = "dashboard"` + `dashboardView.openDatabases()/openDocker()`; nearby `:290-303` the `onFolderSelected` pattern.
+3. `qml/Dashboard.qml:444` — `activePage` with values `"dashboard"/"folder"/"detail"/"databases"/"docker"`; `openDatabases/openDocker` (`:494-505`); the page wrap modeled on `:2153-2188`; `markHitTest` (`:526-548`) — a new crumb Label must be added to `controls`, otherwise the title-bar agent eats clicks (a null-guard is mandatory — QWindowKit ASSERT-abort).
+4. Breadcrumb: the `Databases` segments (`:870-910`, including the selected service's 3rd segment) and `Docker` (`:912-924`) with `visible: activePage === "..."`; a clickable return to the list (`:885-890`).
+- Registering a new QML page in two places: `qml.qrc:29-31` (`DatabasesPage.qml`, `ConnectionDialog.qml`, `DockerPage.qml` under `<qresource prefix="/">`) and `CMakeLists.txt:87-89` (`QML_FILES` in `qt_add_qml_module`); the service's C++ files — in `qt_add_executable` (`:49-52`) + platform `.mm` (`:173-178`).
+- Section icon: `Theme.icon(name)` (`qml/Theme.qml:112-131`) — `iconBaseUrl + name + (-dark).png`, single-variant in the `single` map; files in `qml.qrc:48-121` (`database(-dark).png` `:113-114`, `docker(-dark).png` `:115-116`); `Theme.icon("docker")` used in `qml/Sidebar.qml:230` and `qml/DockerPage.qml:447`.

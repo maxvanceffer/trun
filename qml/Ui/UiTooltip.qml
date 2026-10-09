@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls.Basic
+import "../"
 
 pragma ComponentBehavior: Bound
 
@@ -18,7 +19,7 @@ ToolTip {
     }
 
     background: Rectangle {
-        color: Theme.cardBackground
+        color: Theme.backgroundDefault // tooltip content: bg-default
         border.color: Theme.border
         radius: Theme.radiusSm
     }

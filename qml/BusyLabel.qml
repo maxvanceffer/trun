@@ -9,7 +9,7 @@ Item {
 
     property string layout: "horizontal"
     property string text: qsTr("Removing")
-    property color textColor: Theme.destructive
+    property color textColor: Theme.error
     property bool running: true
 
     readonly property bool vertical: root.layout === "vertical"

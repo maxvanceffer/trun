@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import "Ui"
 
 // Ghost icon button (shadcn ghost style): transparent until hovered.
 Button {

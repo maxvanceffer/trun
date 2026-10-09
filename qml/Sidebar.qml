@@ -1,11 +1,18 @@
 import QtQuick
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
+pragma ComponentBehavior: Bound
 
 Rectangle {
     id: sidebar
     width: Theme.sidebarWidth
     color: "transparent"
+
+    readonly property var mcp: mcpAgents // qmllint disable unqualified
+    readonly property var lm: logModel // qmllint disable unqualified
+    readonly property var projSvc: projectService // qmllint disable unqualified
+    readonly property var tm: treeModel // qmllint disable unqualified
+    readonly property var upd: updater // qmllint disable unqualified
 
     // Square when maximized, rounded outer corners otherwise
     readonly property int cornerR: (Window.visibility === Window.Maximized
@@ -28,6 +35,7 @@ Rectangle {
     signal dashboardRequested()
     signal databasesRequested()
     signal dockerRequested()
+    signal apiRequested()
     signal mcpConfigureRequested()
     signal updateCheckRequested()
     signal addProjectsRequested()
@@ -38,10 +46,10 @@ Rectangle {
 
     // Connect log messages
     Connections {
-        target: projectService
+        target: sidebar.projSvc
 
         function onLogMessage(level, target, message) {
-            logModel.add(level, target, message)
+            sidebar.lm.add(level, target, message)
         }
     }
 
@@ -103,7 +111,7 @@ Rectangle {
                 Layout.preferredWidth: Theme.iconSm
                 Layout.preferredHeight: Theme.iconSm
                 Layout.alignment: Qt.AlignVCenter
-                source: iconBaseUrl + (Theme.isDark ? "dashboard-dark.png" : "dashboard.png")
+                source: Theme.icon("dashboard")
                 sourceSize.width: 32
                 sourceSize.height: 32
                 fillMode: Image.PreserveAspectFit
@@ -162,7 +170,7 @@ Rectangle {
                 Layout.preferredWidth: Theme.iconSm
                 Layout.preferredHeight: Theme.iconSm
                 Layout.alignment: Qt.AlignVCenter
-                source: iconBaseUrl + (Theme.isDark ? "database-dark.png" : "database.png")
+                source: Theme.icon("database")
                 sourceSize.width: 32
                 sourceSize.height: 32
                 fillMode: Image.PreserveAspectFit
@@ -220,7 +228,7 @@ Rectangle {
                 Layout.preferredWidth: Theme.iconSm
                 Layout.preferredHeight: Theme.iconSm
                 Layout.alignment: Qt.AlignVCenter
-                source: iconBaseUrl + (Theme.isDark ? "docker-dark.png" : "docker.png")
+                source: Theme.icon("docker")
                 sourceSize.width: 32
                 sourceSize.height: 32
                 fillMode: Image.PreserveAspectFit
@@ -246,10 +254,68 @@ Rectangle {
         }
     }
 
+    Item {
+        id: apiHeader
+        objectName: "apiHeader"
+        anchors.top: dockerHeader.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        height: Theme.sidebarRowHeight
+
+        Rectangle {
+            anchors.fill: parent
+            anchors.topMargin: 1
+            anchors.bottomMargin: 1
+            anchors.leftMargin: Theme.spacingSm
+            anchors.rightMargin: Theme.spacingSm
+            radius: Theme.radiusSm
+            color: apiMouse.containsMouse
+                ? Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.18)
+                : "transparent"
+        }
+
+        RowLayout {
+            anchors.left: parent.left
+            anchors.leftMargin: Theme.sidebarInset
+            anchors.right: parent.right
+            anchors.rightMargin: Theme.spacingSm
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Theme.spacingSm
+
+            Image {
+                Layout.preferredWidth: Theme.iconSm
+                Layout.preferredHeight: Theme.iconSm
+                Layout.alignment: Qt.AlignVCenter
+                source: Theme.icon("globe-code")
+                sourceSize.width: 32
+                sourceSize.height: 32
+                fillMode: Image.PreserveAspectFit
+                smooth: true
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                text: qsTr("API")
+                color: Theme.textPrimary
+                font.pixelSize: Theme.fontSizeMd
+                elide: Text.ElideRight
+            }
+        }
+
+        MouseArea {
+            id: apiMouse
+            anchors.fill: parent
+            hoverEnabled: true
+            cursorShape: Qt.PointingHandCursor
+            onClicked: sidebar.apiRequested()
+        }
+    }
+
     // Fixed section title above the dynamically added projects.
     Item {
         id: sectionHeader
-        anchors.top: dockerHeader.bottom
+        anchors.top: apiHeader.bottom
         anchors.topMargin: Theme.spacingMd
         anchors.left: parent.left
         anchors.right: parent.right
@@ -280,7 +346,7 @@ Rectangle {
             id: tree
             anchors.fill: parent
             clip: true
-            model: treeModel
+            model: sidebar.tm
             delegate: TreeItemDelegate {
                 onFolderClicked: function(folderPath) {
                     tree.selectedFolderPath = folderPath
@@ -320,7 +386,7 @@ Rectangle {
             objectName: "mcpButton"
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: iconBaseUrl + (Theme.isDark ? "mcp-light-32px.png" : "mcp-dark-32px.png")
+            iconSource: Theme.icon("mcp")
             tooltipText: qsTr("MCP servers")
             onClicked: sidebar.mcpConfigureRequested()
         }
@@ -331,7 +397,7 @@ Rectangle {
             anchors.left: mcpButton.right
             anchors.leftMargin: Theme.spacingXs
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: iconBaseUrl + (Theme.isDark ? "folder-plus-dark.png" : "folder-plus.png")
+            iconSource: Theme.icon("folder-plus")
             tooltipText: qsTr("Add projects")
             onClicked: sidebar.addProjectsRequested()
         }
@@ -341,7 +407,7 @@ Rectangle {
             objectName: "settingsButton"
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: iconBaseUrl + (Theme.isDark ? "cog-dark.png" : "cog.png")
+            iconSource: Theme.icon("cog")
             tooltipText: qsTr("Settings")
             onClicked: sidebar.settingsRequested()
         }
@@ -355,9 +421,9 @@ Rectangle {
             anchors.right: settingsButton.left
             anchors.rightMargin: Theme.spacingXs
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: iconBaseUrl + (Theme.isDark ? "rotate-cw-dark.png" : "rotate-cw.png")
-            tooltipText: updater.updateAvailable ? qsTr("Update available") : qsTr("Check for updates")
-            active: updater.updateAvailable
+            iconSource: Theme.icon("refresh")
+            tooltipText: sidebar.upd.updateAvailable ? qsTr("Update available") : qsTr("Check for updates")
+            active: sidebar.upd.updateAvailable
             onClicked: sidebar.updateCheckRequested()
         }
     }
@@ -378,17 +444,17 @@ Rectangle {
         }
     }
 
-    function setAllMcpEnabled(enabled) {        var agents = mcpAgents.scanAgents()
+    function setAllMcpEnabled(enabled) {        var agents = mcp.scanAgents()
         var changed = 0
         for (var i = 0; i < agents.length; ++i) {
             if (!agents[i].installed) {
-                if (enabled && agents[i].found && mcpAgents.installAgent(agents[i].id))
+                if (enabled && agents[i].found && mcp.installAgent(agents[i].id))
                     ++changed
             } else if (agents[i].enabled !== enabled) {
-                if (mcpAgents.setAgentEnabled(agents[i].id, enabled))
+                if (mcp.setAgentEnabled(agents[i].id, enabled))
                     ++changed
             }
         }
-        logModel.add("info", "mcp", (enabled ? "Enabled " : "Disabled ") + changed + " MCP entries")
+        lm.add("info", "mcp", (enabled ? "Enabled " : "Disabled ") + changed + " MCP entries")
     }
 }

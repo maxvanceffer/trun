@@ -6,6 +6,7 @@
 #include "logmodel.h"
 #include "mcpagents.h"
 #include "settings.h"
+#include "apiservice.h"
 #include <QSignalSpy>
 #include <QQmlEngine>
 #include <QQmlComponent>
@@ -356,7 +357,8 @@ void QmlTests::test_console_shows_selected_command()
             Q_ARG(QVariant, QVariant(QString::fromUtf8(cmd))),
             Q_ARG(QVariant, QVariant(QString::fromUtf8(level))),
             Q_ARG(QVariant, QVariant(QString::fromUtf8("t"))),
-            Q_ARG(QVariant, QVariant(QString::fromUtf8(msg))));
+            Q_ARG(QVariant, QVariant(QString::fromUtf8(msg))),
+            Q_ARG(QVariant, QVariant(QStringLiteral(""))));
     };
     auto select = [&](const char *cmd) {
         return QMetaObject::invokeMethod(obj, "selectCommand",
@@ -383,14 +385,215 @@ void QmlTests::test_console_shows_selected_command()
     QCOMPARE(messages(), QStringList({"build-line", "build-line-2"}));
 }
 
+void QmlTests::test_console_run_segments()
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("projectService", g_projectService);
+    engine.rootContext()->setContextProperty("logModel", g_logModel);
+    LogModel commandLog;
+    engine.rootContext()->setContextProperty("commandLog", &commandLog);
+    static CommandExecutor commandExecutor;
+    engine.rootContext()->setContextProperty("commandExecutor", &commandExecutor);
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(QDir::currentPath() + "/icons/").toString());
+
+    QObject *obj = loadDashboard(engine, QDir::currentPath());
+    QVERIFY(obj != nullptr);
+    QScopedPointer<QObject> guard(obj);
+
+    auto append = [&](const char *cmd, const char *level, const char *msg) {
+        return QMetaObject::invokeMethod(obj, "appendCommandLine",
+            Q_ARG(QVariant, QVariant(QString::fromUtf8(cmd))),
+            Q_ARG(QVariant, QVariant(QString::fromUtf8(level))),
+            Q_ARG(QVariant, QVariant(QString::fromUtf8("t"))),
+            Q_ARG(QVariant, QVariant(QString::fromUtf8(msg))),
+            Q_ARG(QVariant, QVariant(QStringLiteral(""))));
+    };
+    auto startRun = [&](const char *cmd, const char *label, const char *line) {
+        return QMetaObject::invokeMethod(obj, "startRun",
+            Q_ARG(QVariant, QVariant(QString::fromUtf8(cmd))),
+            Q_ARG(QVariant, QVariant(QString::fromUtf8(label))),
+            Q_ARG(QVariant, QVariant(QString::fromUtf8(line))));
+    };
+    auto finishRun = [&](const char *cmd, int exitCode) {
+        return QMetaObject::invokeMethod(obj, "finishRun",
+            Q_ARG(QVariant, QVariant(QString::fromUtf8(cmd))),
+            Q_ARG(QVariant, QVariant(QStringLiteral("label"))),
+            Q_ARG(QVariant, QVariant(exitCode)),
+            Q_ARG(QVariant, QVariant(QStringLiteral(""))));
+    };
+    auto showRun = [&](const char *cmd, int seq) {
+        return QMetaObject::invokeMethod(obj, "showRun",
+            Q_ARG(QVariant, QVariant(QString::fromUtf8(cmd))),
+            Q_ARG(QVariant, QVariant(seq)));
+    };
+    auto select = [&](const char *cmd) {
+        return QMetaObject::invokeMethod(obj, "selectCommand",
+            Q_ARG(QVariant, QVariant(QString::fromUtf8(cmd))));
+    };
+    auto messages = [&]() {
+        QStringList out;
+        for (int i = 0; i < commandLog.rowCount(); ++i)
+            out << commandLog.data(commandLog.index(i, 0), LogModel::MessageRole).toString();
+        return out;
+    };
+    auto menu = [&](const char *cmd) -> QVariantList {
+        QVariant ret;
+        if (!QMetaObject::invokeMethod(obj, "runMenu",
+                Q_RETURN_ARG(QVariant, ret),
+                Q_ARG(QVariant, QVariant(QString::fromUtf8(cmd)))))
+            return {};
+        return ret.toList();
+    };
+
+    // A pre-run system line belongs to no segment but stays visible.
+    QVERIFY(append("npm:build", "system", "pre-run hint"));
+    QVERIFY(startRun("npm:build", "build", "npm run build"));
+    QVERIFY(append("npm:build", "stdout", "first output"));
+
+    QVERIFY(select("npm:build"));
+    QCOMPARE(messages(), QStringList({"pre-run hint", "npm run build", "first output"}));
+
+    QVERIFY(finishRun("npm:build", 0));
+    QCOMPARE(menu("npm:build").size(), 1);
+    QVERIFY(menu("npm:build").first().toMap().value("label").toString().startsWith(QStringLiteral("#1 · ")));
+
+    // A second run segments the console: only its own lines show.
+    QVERIFY(startRun("npm:build", "build", "npm run build"));
+    QVERIFY(append("npm:build", "stdout", "second output"));
+    QCOMPARE(messages(), QStringList({"pre-run hint", "npm run build", "second output"}));
+
+    // Back to the first segment.
+    QVERIFY(showRun("npm:build", 1));
+    QCOMPARE(messages(), QStringList({"pre-run hint", "npm run build", "first output"}));
+}
+
+void QmlTests::test_console_parameters_option_kinds()
+{
+    QQmlEngine engine;
+
+    // Fake Settings: plain key/value store.
+    QQmlComponent storeComponent(&engine);
+    storeComponent.setData("import QtQml\nQtObject {\n"
+                           "property var data: ({})\n"
+                           "function get(key, def) { return data[key] !== undefined ? data[key] : def }\n"
+                           "function set(key, value) { data[key] = value }\n}",
+                           QUrl());
+    QVERIFY2(storeComponent.isReady(), "store harness not ready");
+    QObject *store = storeComponent.create();
+    QVERIFY(store != nullptr);
+    QScopedPointer<QObject> guardStore(store);
+
+    auto optMeta = [](const char *name, bool valueRequired, bool acceptValue,
+                      const char *def, bool multiple = false) {
+        QVariantMap m{{QStringLiteral("kind"), QStringLiteral("option")},
+                      {QStringLiteral("name"), QString::fromUtf8(name)},
+                      {QStringLiteral("required"), false},
+                      {QStringLiteral("valueRequired"), valueRequired},
+                      {QStringLiteral("acceptValue"), acceptValue},
+                      {QStringLiteral("hidden"), false},
+                      {QStringLiteral("description"), QStringLiteral("d %1").arg(QString::fromUtf8(name))}};
+        if (def != nullptr)
+            m.insert(QStringLiteral("default"), QString::fromUtf8(def));
+        if (multiple)
+            m.insert(QStringLiteral("multiple"), true);
+        return m;
+    };
+    QVariantList meta{
+        QVariantMap{{QStringLiteral("kind"), QStringLiteral("positional")},
+                    {QStringLiteral("name"), QStringLiteral("target")},
+                    {QStringLiteral("required"), true},
+                    {QStringLiteral("description"), QStringLiteral("t")}},
+        optMeta("campaign", true, true, nullptr), // VALUE_REQUIRED, no default: auto-required
+        optMeta("weeks", false, true, "5"), // VALUE_OPTIONAL: input, not a flag
+        optMeta("visitors", false, true, "30"),
+        optMeta("outliers", false, false, nullptr), // VALUE_NONE: flag chip
+    };
+    const QVariantMap command{{QStringLiteral("command"), QStringLiteral("bin/console")},
+                              {QStringLiteral("label"), QStringLiteral("ply:populate:campaign")},
+                              {QStringLiteral("description"), QStringLiteral("Populate")},
+                              {QStringLiteral("argsMeta"), meta}};
+
+    // Stored flag-era residue: weeks was a chip storing "on".
+    store->setProperty("data", QVariantMap{
+        {QStringLiteral("runConfig/p/c"),
+         QStringLiteral(R"({"argsValues":{"weeks":"on","campaign":"15"},"addedOptions":["weeks","outliers"]})")},
+    });
+
+    QQmlComponent component(&engine, QUrl::fromLocalFile(sourceQmlPath("ConsoleParameters.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+    QObject *panel = component.create();
+    QVERIFY(panel != nullptr);
+    QScopedPointer<QObject> guard(panel);
+    QVERIFY(panel->setProperty("store", QVariant::fromValue(store)));
+    QVERIFY(panel->setProperty("projectId", QStringLiteral("p")));
+    QVERIFY(panel->setProperty("commandId", QStringLiteral("c")));
+    QVERIFY(panel->setProperty("command", command));
+    QVERIFY(QMetaObject::invokeMethod(panel, "reload"));
+
+    // Stale "on" migrates to the declared default; real values are kept.
+    const QVariantMap values = panel->property("values").toMap();
+    QCOMPARE(values.value("weeks").toString(), QStringLiteral("5"));
+    QCOMPARE(values.value("campaign").toString(), QStringLiteral("15"));
+
+    // Classification: required/optional values are inputs, VALUE_NONE a flag.
+    auto kinds = [&]() {
+        QVariantMap out;
+        const QVariantList defs = panel->property("optionDefs").toList();
+        for (const QVariant &v : defs)
+            out.insert(v.toMap().value("name").toString(),
+                       v.toMap().value("kind").toString());
+        return out;
+    };
+    const QVariantMap k = kinds();
+    QCOMPARE(k.value("campaign").toString(), QStringLiteral("value"));
+    QCOMPARE(k.value("weeks").toString(), QStringLiteral("value"));
+    QCOMPARE(k.value("outliers").toString(), QStringLiteral("flag"));
+
+    // campaign is auto-required: always in the grid (locked), never in
+    // the "+ Add option" list.
+    QVariant ret;
+    QVERIFY(QMetaObject::invokeMethod(panel, "isAutoRequired",
+        Q_RETURN_ARG(QVariant, ret),
+        Q_ARG(QVariant, QVariant(QStringLiteral("campaign")))));
+    QVERIFY(ret.toBool());
+    QVERIFY(QMetaObject::invokeMethod(panel, "isAutoRequired",
+        Q_RETURN_ARG(QVariant, ret),
+        Q_ARG(QVariant, QVariant(QStringLiteral("weeks")))));
+    QVERIFY(!ret.toBool());
+    bool campaignLocked = false, campaignInGrid = false, campaignOffered = false;
+    for (const QVariant &v : panel->property("gridFields").toList()) {
+        if (v.toMap().value("name").toString() == QStringLiteral("campaign")) {
+            campaignInGrid = true;
+            campaignLocked = v.toMap().value("locked").toBool();
+        }
+    }
+    QVERIFY(campaignInGrid);
+    QVERIFY(campaignLocked);
+    for (const QVariant &v : panel->property("availableOptions").toList()) {
+        if (v.toMap().value("name").toString() == QStringLiteral("campaign"))
+            campaignOffered = true;
+    }
+    QVERIFY(!campaignOffered);
+
+    // Adding an option with a default prefills it; flags switch "on".
+    QVERIFY(QMetaObject::invokeMethod(panel, "addOption",
+        Q_ARG(QVariant, QVariant(QStringLiteral("visitors")))));
+    QCOMPARE(panel->property("values").toMap().value("visitors").toString(),
+             QStringLiteral("30"));
+}
+
 void QmlTests::test_console_format_colors()
 {
     QQmlEngine engine;
     const QString jsUrl = QUrl::fromLocalFile(sourceQmlPath("ConsoleFormat.js")).toString();
     const QString qml = QStringLiteral("import QtQml\nimport \"%1\" as CF\nQtObject {\n"
-        "property string plain: CF.formatLine(\"09:00:00.000\", \"dev\", \"hello\", \"#fff\")\n"
+        "property string plain: CF.formatLine(420, \"hello\", \"\", \"#888\", \"#eab308\")\n"
+        "property string echo: CF.formatLine(0, \"php bin/console foo\", \"echo\", \"#888\", \"#eab308\")\n"
+        "property string long: CF.formatLine(125000, \"later\", \"\", \"#888\", \"#eab308\")\n"
         "property string colored: CF.ansiToHtml(\"\\u001b[31mred\\u001b[0m ok\")\n"
-        "property string escaped: CF.formatLine(\"t\", \"<x>\", \"a&b\", \"#fff\")\n"
+        "property string escaped: CF.formatLine(0, \"a<b>&c\", \"\", \"#888\", \"#eab308\")\n"
         "}").arg(jsUrl);
     QQmlComponent component(&engine);
     component.setData(qml.toUtf8(), QUrl());
@@ -401,17 +604,22 @@ void QmlTests::test_console_format_colors()
     QScopedPointer<QObject> guard(obj);
 
     const QString plain = obj->property("plain").toString();
-    QVERIFY(plain.contains(QStringLiteral("[09:00:00.000]")));
-    QVERIFY(plain.contains(QStringLiteral("dev:")));
+    QVERIFY(plain.contains(QStringLiteral("+0.42s")));
     QVERIFY(plain.contains(QStringLiteral("hello")));
+    QVERIFY(!plain.contains(QStringLiteral("color:#eab308")));
+    const QString echo = obj->property("echo").toString();
+    QVERIFY(echo.contains(QStringLiteral("+0.00s")));
+    QVERIFY(echo.contains(QStringLiteral("color:#eab308")));
+    QVERIFY(echo.contains(QStringLiteral("php bin/console foo")));
+    const QString longRow = obj->property("long").toString();
+    QVERIFY(longRow.contains(QStringLiteral("+2:05.00")));
     const QString colored = obj->property("colored").toString();
     QVERIFY(colored.contains(QStringLiteral("color:#ef4444")));
     QVERIFY(colored.contains(QStringLiteral("red")));
     QVERIFY(colored.contains(QStringLiteral("ok")));
     QVERIFY(!colored.contains(QStringLiteral("\x1b")));
     const QString escaped = obj->property("escaped").toString();
-    QVERIFY(escaped.contains(QStringLiteral("&lt;x&gt;")));
-    QVERIFY(escaped.contains(QStringLiteral("a&amp;b")));
+    QVERIFY(escaped.contains(QStringLiteral("a&lt;b&gt;&amp;c")));
 }
 
 void QmlTests::test_tool_plugins()
@@ -573,7 +781,8 @@ void QmlTests::test_sniff_detects_port_from_url()
         Q_ARG(QVariant, QVariant(QStringLiteral("npm:serve"))),
         Q_ARG(QVariant, QVariant(QStringLiteral("stdout"))),
         Q_ARG(QVariant, QVariant(QStringLiteral("t"))),
-        Q_ARG(QVariant, QVariant(QString::fromUtf8("  ➜  Local:   http://localhost:5173/")))));
+        Q_ARG(QVariant, QVariant(QString::fromUtf8("  ➜  Local:   http://localhost:5173/"))),
+        Q_ARG(QVariant, QVariant(QStringLiteral("")))));
     const QVariantMap ports = obj->property("detectedPorts").toMap();
     // No active project in this harness: key is "|npm:serve"
     QCOMPARE(ports.value(QStringLiteral("|npm:serve")).toInt(), 5173);
@@ -583,7 +792,8 @@ void QmlTests::test_sniff_detects_port_from_url()
         Q_ARG(QVariant, QVariant(QStringLiteral("composer:serve"))),
         Q_ARG(QVariant, QVariant(QStringLiteral("stdout"))),
         Q_ARG(QVariant, QVariant(QStringLiteral("t"))),
-        Q_ARG(QVariant, QVariant(QStringLiteral("Listening on 127.0.0.1:8000")))));
+        Q_ARG(QVariant, QVariant(QStringLiteral("Listening on 127.0.0.1:8000"))),
+        Q_ARG(QVariant, QVariant(QStringLiteral("")))));
     const QVariantMap ports2 = obj->property("detectedPorts").toMap();
     QCOMPARE(ports2.value(QStringLiteral("|composer:serve")).toInt(), 8000);
 
@@ -592,7 +802,8 @@ void QmlTests::test_sniff_detects_port_from_url()
         Q_ARG(QVariant, QVariant(QStringLiteral("npm:dev"))),
         Q_ARG(QVariant, QVariant(QStringLiteral("stdout"))),
         Q_ARG(QVariant, QVariant(QStringLiteral("t"))),
-        Q_ARG(QVariant, QVariant(QStringLiteral("Bull admin listening on port 8040")))));
+        Q_ARG(QVariant, QVariant(QStringLiteral("Bull admin listening on port 8040"))),
+        Q_ARG(QVariant, QVariant(QStringLiteral("")))));
     const QVariantMap ports3 = obj->property("detectedPorts").toMap();
     QCOMPARE(ports3.value(QStringLiteral("|npm:dev")).toInt(), 8040);
 }
@@ -712,25 +923,25 @@ void QmlTests::test_icons_in_assets()
     if (!QFile::exists(iconDir + "/npm.svg"))
         iconDir = QDir::cleanPath(buildDir + "/../assets/icons");
 
-    // Check that npm-32px.png exists (referenced by package.json projects)
-    QVERIFY(QFile::exists(iconDir + "/npm-32px.png"));
+    // Check that npm.png exists (referenced by package.json projects)
+    QVERIFY(QFile::exists(iconDir + "/npm.png"));
 
     // Check that rust light/dark exist (referenced by Cargo.toml projects)
-    QVERIFY(QFile::exists(iconDir + "/rust-light-32px.png"));
-    QVERIFY(QFile::exists(iconDir + "/rust-dark-32px.png"));
+    QVERIFY(QFile::exists(iconDir + "/rust.png"));
+    QVERIFY(QFile::exists(iconDir + "/rust-dark.png"));
 
     // Check that go light/dark exist (referenced by go.mod projects)
-    QVERIFY(QFile::exists(iconDir + "/go-light-32px.png"));
-    QVERIFY(QFile::exists(iconDir + "/go-dark-32px.png"));
+    QVERIFY(QFile::exists(iconDir + "/go.png"));
+    QVERIFY(QFile::exists(iconDir + "/go-dark.png"));
 
-    // Check that python-32px.png exists (referenced by pyproject.toml projects)
-    QVERIFY(QFile::exists(iconDir + "/python-32px.png"));
+    // Check that python.png exists (referenced by pyproject.toml projects)
+    QVERIFY(QFile::exists(iconDir + "/python.png"));
 
-    // Check that composer-32px.png exists (referenced by composer.json projects)
-    QVERIFY(QFile::exists(iconDir + "/composer-32px.png"));
+    // Check that composer.png exists (referenced by composer.json projects)
+    QVERIFY(QFile::exists(iconDir + "/composer.png"));
 
-    // Check that default-32px.png exists
-    QVERIFY(QFile::exists(iconDir + "/default-32px.png"));
+    // Check that default.png exists
+    QVERIFY(QFile::exists(iconDir + "/default.png"));
 
     // Check that the folders stack exists (folder rows incl. roots, Browse button)
     QVERIFY(QFile::exists(iconDir + "/folders.png"));
@@ -743,25 +954,25 @@ void QmlTests::test_icons_in_assets()
     // Check bash.png (custom-commands section header)
     QVERIFY(QFile::exists(iconDir + "/bash.png"));
 
-    // Sidebar iconography: file-terminal marker for manifest rows,
+    // Sidebar iconography: file marker for manifest rows,
     // stack for plain folders, each with a light variant for dark theme
-    QVERIFY(QFile::exists(iconDir + "/file-terminal.png"));
-    QVERIFY(QFile::exists(iconDir + "/file-terminal-dark.png"));
+    QVERIFY(QFile::exists(iconDir + "/file.png"));
+    QVERIFY(QFile::exists(iconDir + "/file-dark.png"));
     QVERIFY(QFile::exists(iconDir + "/folders.png"));
     QVERIFY(QFile::exists(iconDir + "/folders-dark.png"));
 
-    // Check UI glyphs used by icon-only ghost buttons
-    QVERIFY(QFile::exists(iconDir + "/brush-cleaning.png"));
+    // Check UI glyphs used by icon-only ghost buttons (clean, chevron, cog)
+    QVERIFY(QFile::exists(iconDir + "/clean.png"));
     QVERIFY(QFile::exists(iconDir + "/chevron-down.png"));
     QVERIFY(QFile::exists(iconDir + "/chevron-down-dark.png"));
     QVERIFY(QFile::exists(iconDir + "/chevron-up.png"));
     QVERIFY(QFile::exists(iconDir + "/chevron-up-dark.png"));
     QVERIFY(QFile::exists(iconDir + "/cog.png"));
     QVERIFY(QFile::exists(iconDir + "/cog-dark.png"));
-    QVERIFY(QFile::exists(iconDir + "/terminal-light-32px.png"));
-    QVERIFY(QFile::exists(iconDir + "/terminal-dark-32px.png"));
-    QVERIFY(QFile::exists(iconDir + "/mcp-light-32px.png"));
-    QVERIFY(QFile::exists(iconDir + "/mcp-dark-32px.png"));
+    QVERIFY(QFile::exists(iconDir + "/terminal.png"));
+    QVERIFY(QFile::exists(iconDir + "/terminal-dark.png"));
+    QVERIFY(QFile::exists(iconDir + "/mcp.png"));
+    QVERIFY(QFile::exists(iconDir + "/mcp-dark.png"));
 }
 
 void QmlTests::test_qrc_icon_paths_in_qml()
@@ -781,9 +992,9 @@ void QmlTests::test_qrc_icon_paths_in_qml()
     QString content = in.readAll();
     file.close();
 
-    // Verify absolute icon URLs are used (qrc:/icons/ or iconBaseUrl-based),
+    // Verify absolute icon URLs are used (qrc:/icons/, iconBaseUrl or Theme.icon-based),
     // never relative "icons/" paths (those break when resources are embedded)
-    QRegularExpression absPattern(QStringLiteral("(qrc:/icons/|iconBaseUrl)"));
+    QRegularExpression absPattern(QStringLiteral("(qrc:/icons/|iconBaseUrl|Theme\\.icon)"));
     QRegularExpressionMatchIterator it = absPattern.globalMatch(content);
     int matchCount = 0;
     while (it.hasNext()) {
@@ -1163,6 +1374,379 @@ void QmlTests::test_busy_label_loads()
         QVERIFY2(item->implicitWidth() > 0.0, layout);
         QVERIFY2(item->implicitHeight() > 0.0, layout);
     }
+}
+
+// T6: the cURL importer is plain C++ with no QML around it, so the parse
+// contract (method, url, -H, -d, -u, {{var}} kept verbatim) is pinned here.
+void QmlTests::test_api_import_curl()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    Settings settings(tmp.path() + "/trun.ini");
+    ApiService svc(&settings);
+
+    // Multi-line command with quotes, backslash continuations and unknown
+    // flags that must be skipped rather than eaten as the URL.
+    const QString cmd = QStringLiteral(
+        "curl --location -X PATCH 'https://api.example.com/v1/campaigns/{{id}}' \\\n"
+        "  -H 'Content-Type: application/json' \\\n"
+        "  -H \"Authorization: Bearer {{token}}\" \\\n"
+        "  -u alice:s3cret \\\n"
+        "  --data '{\"name\":\"x\"}' \\\n"
+        "  --compressed -sSL -o /tmp/out.json");
+    QVERIFY(!svc.importCurl(cmd).isEmpty());
+    QCOMPARE(svc.requests().size(), 1);
+
+    const QVariantMap r = svc.requests().at(0).toMap();
+    QCOMPARE(r.value(QStringLiteral("method")).toString(), QStringLiteral("PATCH"));
+    // {{var}} survives: no substitution happens at import time.
+    QCOMPARE(r.value(QStringLiteral("url")).toString(),
+             QStringLiteral("https://api.example.com/v1/campaigns/{{id}}"));
+    QCOMPARE(r.value(QStringLiteral("body")).toString(), QStringLiteral("{\"name\":\"x\"}"));
+    // Name follows the Save dialog suggestion: method + path.
+    QCOMPARE(r.value(QStringLiteral("name")).toString(),
+             QStringLiteral("PATCH /v1/campaigns/{{id}}"));
+
+    const QVariantList headers = r.value(QStringLiteral("headers")).toList();
+    QCOMPARE(headers.size(), 2);
+    QCOMPARE(headers.at(0).toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Content-Type"));
+    QCOMPARE(headers.at(0).toMap().value(QStringLiteral("value")).toString(),
+             QStringLiteral("application/json"));
+    QCOMPARE(headers.at(1).toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Authorization"));
+    QVERIFY(headers.at(0).toMap().value(QStringLiteral("enabled")).toBool());
+
+    const QVariantMap auth = r.value(QStringLiteral("auth")).toMap();
+    QCOMPARE(auth.value(QStringLiteral("type")).toString(), QStringLiteral("basic"));
+    QCOMPARE(auth.value(QStringLiteral("user")).toString(), QStringLiteral("alice"));
+    QCOMPARE(auth.value(QStringLiteral("password")).toString(), QStringLiteral("s3cret"));
+
+    // No -X: -d promotes GET to POST; a bare command stays GET.
+    QVERIFY(!svc.importCurl(QStringLiteral("curl -d a=1 https://example.test/x")).isEmpty());
+    QCOMPARE(svc.requests().at(1).toMap().value(QStringLiteral("method")).toString(),
+             QStringLiteral("POST"));
+    QVERIFY(!svc.importCurl(QStringLiteral("curl https://example.test/ping")).isEmpty());
+    QCOMPARE(svc.requests().at(2).toMap().value(QStringLiteral("method")).toString(),
+             QStringLiteral("GET"));
+
+    // Failures report through errorMessage() and add nothing.
+    QSignalSpy errors(&svc, &ApiService::errorMessage);
+    QVERIFY(svc.importCurl(QString()).isEmpty());
+    QVERIFY(svc.importCurl(QStringLiteral("curl")).isEmpty());
+    QCOMPARE(errors.count(), 2);
+    QCOMPARE(svc.requests().size(), 3);
+
+    // Untitled draft matches the design's newRequest().
+    QVERIFY(!svc.newUntitled().isEmpty());
+    const QVariantMap draft = svc.requests().at(3).toMap();
+    QCOMPARE(draft.value(QStringLiteral("name")).toString(),
+             QStringLiteral("Untitled request"));
+    QCOMPARE(draft.value(QStringLiteral("url")).toString(),
+             QStringLiteral("{{baseUrl}}/"));
+
+    // A running-server "Open →" opens the same draft with its URL pasted in.
+    QVERIFY(!svc.newUntitled(QStringLiteral("http://localhost:5173/")).isEmpty());
+    QCOMPARE(svc.requests().at(4).toMap().value(QStringLiteral("url")).toString(),
+             QStringLiteral("http://localhost:5173/"));
+
+    // Round-trip: a fresh service over the same Settings sees every request.
+    ApiService reloaded(&settings);
+    reloaded.ensureLoaded();
+    QCOMPARE(reloaded.requests().size(), 5);
+    QCOMPARE(reloaded.requests().at(0).toMap().value(QStringLiteral("url")).toString(),
+             r.value(QStringLiteral("url")).toString());
+}
+
+// T4: the history slice is read-only for the list; Clear must drop every
+// entry and leave Settings empty for the next start.
+void QmlTests::test_api_history_clear()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    Settings settings(tmp.path() + "/trun.ini");
+
+    settings.set(QStringLiteral("api/history"),
+                 QStringLiteral("[{\"method\":\"GET\",\"url\":\"http://localhost:8000/a\","
+                                "\"status\":200,\"at\":\"2026-10-06T12:00:00Z\"},"
+                                "{\"method\":\"POST\",\"url\":\"http://localhost:8000/b\","
+                                "\"status\":401,\"at\":\"2026-10-06T12:05:00Z\"}]"));
+
+    ApiService svc(&settings);
+    svc.ensureLoaded();
+    QCOMPARE(svc.history().size(), 2);
+    QCOMPARE(svc.history().at(0).toMap().value(QStringLiteral("method")).toString(),
+             QStringLiteral("GET"));
+    QCOMPARE(svc.history().at(1).toMap().value(QStringLiteral("status")).toInt(), 401);
+
+    QSignalSpy changed(&svc, &ApiService::historyChanged);
+    QVERIFY(svc.clearHistory());
+    QCOMPARE(svc.history().size(), 0);
+    QCOMPARE(changed.count(), 1);
+
+    // Round-trip: a fresh service over the same Settings sees it wiped.
+    ApiService reloaded(&settings);
+    reloaded.ensureLoaded();
+    QCOMPARE(reloaded.history().size(), 0);
+
+    // Clearing an already-empty history succeeds without re-persisting.
+    QVERIFY(reloaded.clearHistory());
+    QCOMPARE(changed.count(), 1);
+}
+
+// Fakes for the ApiPage list test: only the surfaces the page reads.
+class FakeApiService : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantList requests READ requests NOTIFY requestsChanged)
+    Q_PROPERTY(QVariantList history READ history NOTIFY historyChanged)
+    Q_PROPERTY(QVariantList environments READ environments NOTIFY environmentsChanged)
+    Q_PROPERTY(QString activeEnvId READ activeEnvId NOTIFY activeEnvIdChanged)
+
+public:
+    QVariantList requests() const { return m_requests; }
+    QVariantList history() const { return m_history; }
+    QVariantList environments() const { return m_envs; }
+    QString activeEnvId() const { return m_active; }
+    void setRequests(const QVariantList &r)
+    {
+        m_requests = r;
+        emit requestsChanged();
+    }
+    Q_INVOKABLE void ensureLoaded() {}
+    Q_INVOKABLE bool setActiveEnv(const QString &id)
+    {
+        m_active = id;
+        emit activeEnvIdChanged();
+        return true;
+    }
+    Q_INVOKABLE QString newUntitled(const QString &url = QString())
+    {
+        Q_UNUSED(url);
+        return QStringLiteral("new-id");
+    }
+    Q_INVOKABLE QString importCurl(const QString &command)
+    {
+        Q_UNUSED(command);
+        return QString();
+    }
+    Q_INVOKABLE bool clearHistory() { return true; }
+
+signals:
+    void requestsChanged();
+    void historyChanged();
+    void environmentsChanged();
+    void activeEnvIdChanged();
+    void errorMessage(const QString &message);
+
+private:
+    QVariantList m_requests;
+    QVariantList m_history;
+    QVariantList m_envs;
+    QString m_active;
+};
+
+class FakeProjectServiceForApi : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantList runningCommands READ runningCommands NOTIFY runningCommandsChanged)
+
+public:
+    QVariantList runningCommands() const { return {}; }
+    Q_INVOKABLE QVariantList projects() const { return m_projects; }
+    void setProjects(const QVariantList &p) { m_projects = p; }
+
+signals:
+    void runningCommandsChanged();
+
+private:
+    QVariantList m_projects;
+};
+
+class FakeDashboardForApi : public QObject {
+    Q_OBJECT
+    Q_PROPERTY(QVariantMap detectedPorts READ detectedPorts NOTIFY detectedPortsChanged)
+
+public:
+    QVariantMap detectedPorts() const { return {}; }
+    Q_INVOKABLE QString timeAgo(const QString &iso) const
+    {
+        Q_UNUSED(iso);
+        return QStringLiteral("2m ago");
+    }
+
+signals:
+    void detectedPortsChanged();
+};
+
+// T4: the list is pure QML over the service slices. Pins the grouping
+// (project name uppercased, empty id -> UNSAVED) and the name+url search.
+void QmlTests::test_api_page_list_groups()
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("logModel", g_logModel);
+    const QString buildDir = QDir::currentPath();
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(buildDir + "/icons/").toString());
+
+    FakeApiService api;
+    const QVariantList reqs{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("1")},
+                    {QStringLiteral("name"), QStringLiteral("Get campaign")},
+                    {QStringLiteral("method"), QStringLiteral("GET")},
+                    {QStringLiteral("url"), QStringLiteral("{{baseUrl}}/api/campaigns")},
+                    {QStringLiteral("projectId"), QStringLiteral("p/one")},
+                    {QStringLiteral("lastStatus"), 200},
+                    {QStringLiteral("lastAt"), QStringLiteral("2026-10-06T12:00:00Z")},
+                    {QStringLiteral("headers"), QVariantList{}}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("2")},
+                    {QStringLiteral("name"), QStringLiteral("Create visitor")},
+                    {QStringLiteral("method"), QStringLiteral("POST")},
+                    {QStringLiteral("url"), QStringLiteral("{{baseUrl}}/api/events")},
+                    {QStringLiteral("projectId"), QStringLiteral("p/one")},
+                    {QStringLiteral("lastStatus"), 0},
+                    {QStringLiteral("lastAt"), QString()},
+                    {QStringLiteral("headers"), QVariantList{}}},
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("3")},
+                    {QStringLiteral("name"), QStringLiteral("Health")},
+                    {QStringLiteral("method"), QStringLiteral("GET")},
+                    {QStringLiteral("url"), QStringLiteral("http://localhost:4317/health")},
+                    {QStringLiteral("projectId"), QString()},
+                    {QStringLiteral("lastStatus"), 200},
+                    {QStringLiteral("lastAt"), QStringLiteral("2026-10-06T11:00:00Z")},
+                    {QStringLiteral("headers"), QVariantList{}}},
+    };
+    api.setRequests(reqs);
+    engine.rootContext()->setContextProperty("apiService", &api);
+
+    FakeProjectServiceForApi proj;
+    proj.setProjects(QVariantList{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("p/one")},
+                    {QStringLiteral("name"), QStringLiteral("personizely-backend")}}});
+    engine.rootContext()->setContextProperty("projectService", &proj);
+
+    FakeDashboardForApi dash;
+    engine.rootContext()->setContextProperty("dashboard", &dash);
+
+    QQmlComponent component(&engine,
+        QUrl::fromLocalFile(sourceQmlPath("ApiPage.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+
+    QQuickItem host;
+    host.setWidth(900);
+    host.setHeight(700);
+    QObject *obj = component.createWithInitialProperties({}, engine.rootContext());
+    QVERIFY(obj != nullptr);
+    auto *page = qobject_cast<QQuickItem *>(obj);
+    QVERIFY(page != nullptr);
+    page->setParentItem(&host);
+    page->setWidth(900);
+    page->setHeight(700);
+    QTest::qWait(100);
+
+    // Two groups: the known project (uppercased name) and the unsaved bucket.
+    const QVariantList groups = page->property("requestGroups").toList();
+    QCOMPARE(groups.size(), 2);
+    QCOMPARE(groups.at(0).toMap().value(QStringLiteral("title")).toString(),
+             QStringLiteral("PERSONIZELY-BACKEND"));
+    QCOMPARE(groups.at(0).toMap().value(QStringLiteral("count")).toInt(), 2);
+    QCOMPARE(groups.at(1).toMap().value(QStringLiteral("title")).toString(),
+             QStringLiteral("UNSAVED"));
+    QCOMPARE(groups.at(1).toMap().value(QStringLiteral("count")).toInt(), 1);
+
+    // The empty plate gives way to the list once something is saved.
+    QQuickItem *plate = page->findChild<QQuickItem *>(QStringLiteral("apiEmptyPlate"));
+    QVERIFY(plate != nullptr);
+    QVERIFY(!plate->property("visible").toBool());
+    QQuickItem *scroll = page->findChild<QQuickItem *>(QStringLiteral("apiListScroll"));
+    QVERIFY(scroll != nullptr);
+    QVERIFY(scroll->property("visible").toBool());
+
+    // Search covers name + url and drops emptied groups.
+    page->setProperty("searchQuery", "events");
+    QTest::qWait(20);
+    const QVariantList filtered = page->property("requestGroups").toList();
+    QCOMPARE(filtered.size(), 1);
+    QCOMPARE(filtered.at(0).toMap().value(QStringLiteral("count")).toInt(), 1);
+
+    page->setProperty("searchQuery", "localhost:4317");
+    QTest::qWait(20);
+    const QVariantList byUrl = page->property("requestGroups").toList();
+    QCOMPARE(byUrl.size(), 1);
+    QCOMPARE(byUrl.at(0).toMap().value(QStringLiteral("title")).toString(),
+             QStringLiteral("UNSAVED"));
+
+    page->setProperty("searchQuery", "");
+    QTest::qWait(20);
+    QCOMPARE(page->property("requestGroups").toList().size(), 2);
+
+    delete obj;
+}
+
+// UiListElement is the shared list card. Its click handler must not swallow
+// taps aimed at controls placed inside it (Docker/Databases cards carry
+// buttons); only taps on the empty chrome count as a card click.
+void QmlTests::test_ui_list_element_click_through()
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(QDir::currentPath() + "/icons/").toString());
+
+    const QString qml = QStringLiteral(
+        "import QtQuick\n"
+        "import \"Ui\"\n"
+        "UiListElement {\n"
+        "    id: card\n"
+        "    width: 300\n"
+        "    height: 60\n"
+        "    UiButton {\n"
+        "        objectName: \"innerBtn\"\n"
+        "        anchors.centerIn: parent\n"
+        "        label: \"Act\"\n"
+        "    }\n"
+        "}\n");
+
+    QQmlComponent component(&engine);
+    // Base the (in-memory) instance in the source qml dir so `import "Ui"`
+    // resolves against the real qml/Ui tree, not the stale build copy.
+    const QUrl base = QUrl::fromLocalFile(
+        QDir::cleanPath(QDir::currentPath() + "/../qml/TestUiListElement.qml"));
+    component.setData(qml.toUtf8(), base);
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+
+    QScopedPointer<QObject> root(component.create());
+    QVERIFY(root != nullptr);
+    auto *card = qobject_cast<QQuickItem *>(root.data());
+    QVERIFY(card != nullptr);
+    QCOMPARE(card->property("radius").toInt(), 12);
+    QVERIFY(card->property("clickable").toBool());
+
+    QQuickItem *btn = card->findChild<QQuickItem *>(QStringLiteral("innerBtn"));
+    QVERIFY(btn != nullptr);
+
+    QQuickWindow window;
+    window.resize(300, 60);
+    card->setParentItem(window.contentItem());
+    card->setPosition(QPointF(0, 0));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTest::qWait(50);
+
+    QSignalSpy cardSpy(root.data(), SIGNAL(clicked()));
+    QSignalSpy btnSpy(btn, SIGNAL(clicked()));
+    QVERIFY(cardSpy.isValid());
+    QVERIFY(btnSpy.isValid());
+
+    // Tap on the inner button: the button fires, the card must not.
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(150, 30));
+    QTest::qWait(50);
+    QCOMPARE(btnSpy.count(), 1);
+    QCOMPARE(cardSpy.count(), 0);
+
+    // Tap on the empty card chrome: the card fires.
+    QTest::mouseClick(&window, Qt::LeftButton, Qt::NoModifier, QPoint(8, 8));
+    QTest::qWait(50);
+    QCOMPARE(cardSpy.count(), 1);
 }
 
 #include "qmltests.moc"

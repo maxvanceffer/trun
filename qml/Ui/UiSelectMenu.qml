@@ -1,12 +1,16 @@
 import QtQuick
-import QtQuick.Controls
+import QtQuick.Controls.Basic
 import QtQuick.Layouts
+import "../"
 
-// UiSelectMenu — searchable select в визуале Nuxt UI SelectMenu
-// (size md, variant outline, dark): триггер-кнопка с шевроном, попап шириной
-// в триггер с поиском сверху, опции с чекмарком выбранного справа.
-// Токены Nuxt (rounded-md 6, p-1.5, max-h 15rem) живут здесь; глобальные
-// цвета/радиусы берутся из Theme (bg-default→cardBackground,
+pragma ComponentBehavior: Bound
+
+// UiSelectMenu — searchable select styled after Nuxt UI SelectMenu
+// (size md, variant outline, dark): a trigger button with a chevron, a
+// popup as wide as the trigger with a search field on top, options with
+// a checkmark for the selected one on the right. The Nuxt tokens
+// (rounded-md 6, p-1.5, max-h 15rem) live here; global colors/radii
+// come from Theme (bg-default→backgroundDefault,
 // bg-elevated→mutedSurface, ring→border).
 Item {
     id: root
@@ -15,17 +19,19 @@ Item {
     property int currentIndex: -1
     property string placeholderText: qsTr("Select…")
     property bool searchable: true
-    // Источник шеврона триггера; пусто — рисуем глиф (компонент независим
-    // от iconBaseUrl, потребитель вроде DetailPage передаёт ассет сам).
+    // Chevron source for the trigger; empty — draw the glyph (the
+    // component is independent of Theme.icon, consumers like DetailPage
+    // pass their own asset).
     property string chevronSource: ""
-    // Источник иконки выбранного пункта; пусто — глиф "✓".
+    // Icon source of the selected entry; empty — the "✓" glyph.
     property string checkIconSource: ""
 
     signal activated(int index)
 
-    // Пункты меню: пересчитываются refreshMenu() (на открытие и на ввод
-    // в поиск). Именно свойство, а не императивный model=, потому что
-    // onCompleted поиска срабатывает раньше создания ListView.
+    // Menu entries: recomputed by refreshMenu() (on open and while
+    // typing in the search). A property, not an imperative model=,
+    // because the search field's onCompleted fires before the ListView
+    // is created.
     property var menuEntries: []
 
     function refreshMenu() {
@@ -38,7 +44,7 @@ Item {
         root.menuEntries = out
     }
 
-    // SelectMenu-специфичная геометрия (в Theme такого шага нет).
+    // SelectMenu-specific geometry (no step for it in Theme).
     readonly property int itemPadding: 6
     readonly property int popupMaxHeight: 240
 
@@ -59,7 +65,7 @@ Item {
         menuPopup.open()
     }
 
-    // Триггер: outline-кнопка (bg-default, inset-ring, hover bg-elevated).
+    // Trigger: an outline button (bg-default, inset-ring, hover bg-elevated).
     Button {
         id: trigger
         anchors.fill: parent
@@ -67,7 +73,7 @@ Item {
 
         background: Rectangle {
             radius: Theme.radiusSm
-            color: trigger.hovered ? Theme.mutedSurface : Theme.cardBackground
+            color: trigger.hovered ? Theme.mutedSurface : Theme.backgroundDefault
             border.color: Theme.border
             border.width: 1
         }
@@ -102,7 +108,7 @@ Item {
         }
     }
 
-    // Попап: bg-default + ring + radius, ширина в триггер.
+    // Popup: bg-default + ring + radius, as wide as the trigger.
     Popup {
         id: menuPopup
         parent: root
@@ -114,7 +120,7 @@ Item {
 
         background: Rectangle {
             radius: Theme.radiusSm
-            color: Theme.cardBackground
+            color: Theme.backgroundDefault // content: bg-default
             border.color: Theme.border
             border.width: 1
         }
@@ -122,7 +128,8 @@ Item {
         contentItem: ColumnLayout {
             spacing: 0
 
-            // Поиск внутри меню (как у Nuxt: input с нижней границей).
+            // Search inside the popup (Nuxt-style: an input with a
+            // bottom border).
             UiInput {
                 id: searchField
                 Layout.fillWidth: true
@@ -157,12 +164,13 @@ Item {
 
                 delegate: Button {
                     id: rowBtn
+                    required property var modelData
                     width: ListView.view.width
                     checkable: false
                     onClicked: {
-                        root.currentIndex = modelData.index
+                        root.currentIndex = rowBtn.modelData.index
                         menuPopup.close()
-                        root.activated(modelData.index)
+                        root.activated(rowBtn.modelData.index)
                     }
 
                     background: Rectangle {
@@ -179,19 +187,19 @@ Item {
                         Label {
                             Layout.fillWidth: true
                             leftPadding: root.itemPadding
-                            text: modelData.label
+                            text: rowBtn.modelData.label
                             color: Theme.textPrimary
                             font.pixelSize: Theme.fontSizeLg
                             elide: Text.ElideRight
                         }
 
-                        // Чекмарк выбранного справа (ms-auto).
+                        // Checkmark of the selected entry, right-aligned (ms-auto).
                         Image {
                             Layout.preferredWidth: Theme.iconSm
                             Layout.preferredHeight: Theme.iconSm
                             Layout.rightMargin: root.itemPadding
-                            visible: modelData.index === root.currentIndex
-                                     && root.checkIconSource !== ""
+                            visible: rowBtn.modelData.index === root.currentIndex
+                                      && root.checkIconSource !== ""
                             source: root.checkIconSource
                             sourceSize.width: Theme.iconSm
                             sourceSize.height: Theme.iconSm
@@ -200,8 +208,8 @@ Item {
 
                         Label {
                             rightPadding: root.itemPadding
-                            visible: modelData.index === root.currentIndex
-                                     && root.checkIconSource === ""
+                            visible: rowBtn.modelData.index === root.currentIndex
+                                      && root.checkIconSource === ""
                             text: "✓"
                             color: Theme.accent
                             font.pixelSize: Theme.fontSizeLg

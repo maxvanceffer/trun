@@ -69,26 +69,37 @@
 - For macOS bundle: `trun.app/Contents/MacOS/trun` → dir is `Contents/MacOS/` → icons at `Contents/MacOS/icons` → `exePath + "/icons"`
 - Always try multiple paths with `QFile::exists()` fallback — don't guess
 
-## Skills (Навыки) и MCP-серверы
+## UI — a single source (Nuxt UI)
 
-### 1. Доступные скиллы (официальные Qt AI — `.opencode/skills/`)
+All visuals and all colors come from Nuxt UI through `qml/Ui/*` and the tokens in
+`qml/Theme.qml`.
 
-| Скилл | Назначение |
+Before an edit, read `docs/ui-rules.md` in full on branches involving: a new
+control, a component edit, a color choice. If the needed UI type is not in
+`qml/Ui/`, or the case is not covered by the color map — stop, name which Nuxt UI
+component must be added (with paths to `src/runtime/components/...` and
+`src/theme/...`), and wait for the user's decision.
+
+## Skills and MCP servers
+
+### 1. Available skills (official Qt AI — `.opencode/skills/`)
+
+| Skill | Purpose |
 |---|---|
-| `qt-qml-review` | Проверка и глубокий аудит QML-кода (производительность, утечки, bindings) |
-| `qt-qml` | Лучшие практики написания QML под Qt 6 |
-| `qt-cpp-review` | Анализ C++ кода (потокобезопасность, память, Qt-модели) |
-| `qt-cmake-project` | Настройка и рефакторинг CMake для Qt 6 |
-| `qt-ui-design` | UI/UX стандарты и адаптация интерфейсов |
-| `qt-qml-docs` / `qt-cpp-docs` | Генерация документации по исходникам |
-| `qt-qml-test` / `qt-qml-test-run` | Создание и прогон QML-тестов |
+| `qt-qml-review` | Review and deep audit of QML code (performance, leaks, bindings) |
+| `qt-qml` | QML best practices for Qt 6 |
+| `qt-cpp-review` | C++ code analysis (thread safety, memory, Qt models) |
+| `qt-cmake-project` | Configuring and refactoring CMake for Qt 6 |
+| `qt-ui-design` | UI/UX standards and interface adaptation |
+| `qt-qml-docs` / `qt-cpp-docs` | Generating documentation from source |
+| `qt-qml-test` / `qt-qml-test-run` | Creating and running QML tests |
 
-### 2. Правила использования скиллов
+### 2. Rules for using skills
 
-- **Перед написанием, рефакторингом или ревью кода** ВСЕГДА обращайся к инструкциям соответствующего `SKILL.md`.
-- Не используй устаревший синтаксис Qt 5 или qmake-подходы.
-- Для Qt 6 используй актуальные паттерны и API.
+- **Before writing, refactoring or reviewing code**, ALWAYS consult the instructions of the corresponding `SKILL.md`.
+- Do not use outdated Qt 5 syntax or qmake approaches.
+- For Qt 6, use current patterns and APIs.
 
-### 3. MCP-сервер документации (`qt-docs`)
+### 3. Documentation MCP server (`qt-docs`)
 
-- Для получения актуальной справки по классам, сигналам и методам Qt делай запросы к MCP `qt-docs` (настроен в `opencode.json`), а не опирайся на свои догадки.
+- To get current reference on Qt classes, signals and methods, query the `qt-docs` MCP (configured in `opencode.json`) instead of relying on your own guesses.

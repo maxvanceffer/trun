@@ -4,6 +4,7 @@ import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
 import QWindowKit
+import "Ui"
 
 Window {
     id: wizardWindow
@@ -128,31 +129,15 @@ Window {
         verticalAlignment: Text.AlignVCenter
     }
 
-    Button {
+    UiButton {
         x: 160
         y: 330
         width: 280
         height: 44
-        text: qsTr("Choose Folder")
-        font.bold: true
-        font.pixelSize: 14
-
-        background: Rectangle {
-            implicitWidth: 280
-            implicitHeight: 44
-            radius: 6
-            color: parent.down ? Theme.ring : Theme.primary
-        }
-
-        contentItem: Label {
-            text: parent.text
-            color: Theme.primaryForeground
-            font.pixelSize: 14
-            font.bold: true
-            horizontalAlignment: Text.AlignHCenter
-            verticalAlignment: Text.AlignVCenter
-        }
-
+        label: qsTr("Choose Folder")
+        color: "primary"
+        variant: "solid"
+        size: "lg"
         onClicked: folderPicker.open()
     }
 

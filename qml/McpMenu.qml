@@ -22,7 +22,7 @@ Item {
         id: menuCard
         anchors.fill: parent
         radius: Theme.radiusMd
-        color: Theme.cardBackground
+        color: Theme.backgroundDefault // menu content: bg-default
         border.color: Theme.border
         border.width: 1
     }

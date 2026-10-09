@@ -31,6 +31,8 @@ private slots:
     void test_qrc_icon_paths_in_qml();
     void test_sidebar_uses_theme();
     void test_console_shows_selected_command();
+    void test_console_run_segments();
+    void test_console_parameters_option_kinds();
     void test_console_format_colors();
     void test_tool_plugins();
     void test_dep_offer_opens_dialog();
@@ -44,4 +46,8 @@ private slots:
     void test_docker_page_cards_span_width();
     void test_busy_label_loads();
     void test_run_all_recent();
+    void test_api_import_curl();
+    void test_api_history_clear();
+    void test_api_page_list_groups();
+    void test_ui_list_element_click_through();
 };

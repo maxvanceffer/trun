@@ -31,7 +31,9 @@ Frame {
 
     background: Rectangle {
         radius: 8
-        color: card.running ? "#1a1a1a" : Theme.cardBackground
+        // Running flips the card to Nuxt UI's bg-inverted pair: #181818 in the
+        // light theme, #fffaee in the dark one — the ink below flips with it.
+        color: card.running ? Theme.backgroundInverted : Theme.cardBackground
         border.color: card.hovered ? Theme.accent : Theme.border
         border.width: 1
     }
@@ -118,7 +120,7 @@ Frame {
                 Layout.preferredHeight: 8
                 Layout.alignment: Qt.AlignVCenter
                 radius: 4
-                color: card.running ? "#22c55e" : "#dc2626"
+                color: card.running ? Theme.success : Theme.error
 
                 SequentialAnimation on opacity {
                     id: pulseAnim
@@ -131,7 +133,7 @@ Frame {
 
             Label {
                 text: card.command.label || "Unknown"
-                color: Theme.textPrimary
+                color: card.running ? Theme.textInverted : Theme.textPrimary
                 font.pixelSize: 12
                 font.bold: true
                 Layout.alignment: Qt.AlignVCenter
@@ -141,7 +143,7 @@ Frame {
 
             Label {
                 text: card.running && card.cmdPid > 0 ? String(card.cmdPid) : "—"
-                color: Theme.textMuted
+                color: card.running ? Theme.textInverted : Theme.textMuted
                 font.family: "Menlo"
                 font.pixelSize: 10
                 Layout.alignment: Qt.AlignVCenter
@@ -150,7 +152,7 @@ Frame {
 
         Label {
             text: (card.command.command || "") + " " + (card.command.args ? card.command.args.join(" ") : "")
-            color: Theme.textMuted
+            color: card.running ? Theme.textInverted : Theme.textMuted
             font.pixelSize: 10
             elide: Text.ElideRight
             Layout.fillWidth: true

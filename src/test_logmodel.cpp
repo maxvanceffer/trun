@@ -13,6 +13,8 @@ private slots:
     void testObserved();
     void testVisibleMapping();
     void testCapKeepsMappingValid();
+    void testAddBatch();
+    void testAtKindPassthrough();
 };
 
 static const char *kDebug =
@@ -109,6 +111,62 @@ void TestLogModel::testCapKeepsMappingValid()
     QCOMPARE(m.totalCount(), 1000);
     QCOMPARE(m.count(), 1000);
     QVERIFY(m.get(0).value(QStringLiteral("message")).toString().contains(QStringLiteral("line 5")));
+}
+
+void TestLogModel::testAddBatch()
+{
+    LogModel m;
+    QVariantList lines;
+    for (int i = 0; i < 1005; ++i)
+        lines.append(QVariantMap{
+            {QStringLiteral("level"), QStringLiteral("stdout")},
+            {QStringLiteral("target"), QStringLiteral("serve")},
+            {QStringLiteral("message"),
+             QStringLiteral("[2026-08-13T08:29:43.123853+00:00] doctrine.DEBUG: line %1 []").arg(i)},
+        });
+    m.addBatch(lines);
+    QCOMPARE(m.totalCount(), 1000); // тот же кап, что и у add()
+    QCOMPARE(m.count(), 1000);
+    QVERIFY(m.get(0).value(QStringLiteral("message")).toString().contains(QStringLiteral("line 5")));
+    QVERIFY(m.get(999).value(QStringLiteral("message")).toString().contains(QStringLiteral("line 1004")));
+
+    // Батч добавляется к существующему содержимому, а не заменяет его.
+    m.addBatch(QVariantList{QVariantMap{
+        {QStringLiteral("level"), QStringLiteral("stdout")},
+        {QStringLiteral("target"), QStringLiteral("serve")},
+        {QStringLiteral("message"), QString::fromUtf8(kVite)},
+    }});
+    QCOMPARE(m.totalCount(), 1000); // самая старая строка вытеснена
+    QVERIFY(m.get(999).value(QStringLiteral("message")).toString().contains(QStringLiteral("vite")));
+
+    // Пустой батч — no-op без сброса модели.
+    const int rows = m.rowCount();
+    m.addBatch({});
+    QCOMPARE(m.rowCount(), rows);
+}
+
+void TestLogModel::testAtKindPassthrough()
+{
+    LogModel m;
+    const qlonglong at = 1700000000000LL;
+    m.add(QStringLiteral("stdout"), QStringLiteral("serve"), QStringLiteral("hello"),
+          at, QStringLiteral("echo"));
+    QCOMPARE(m.get(0).value(QStringLiteral("at")).toLongLong(), at);
+    QCOMPARE(m.get(0).value(QStringLiteral("kind")).toString(), QStringLiteral("echo"));
+    // Дефолты: время прибытия + пустой kind.
+    m.add(QStringLiteral("stdout"), QStringLiteral("serve"), QStringLiteral("world"));
+    QVERIFY(m.get(1).value(QStringLiteral("at")).toLongLong() > 0);
+    QVERIFY(m.get(1).value(QStringLiteral("kind")).toString().isEmpty());
+    // Батч проносит оба поля.
+    m.addBatch(QVariantList{QVariantMap{
+        {QStringLiteral("level"), QStringLiteral("stdout")},
+        {QStringLiteral("target"), QStringLiteral("serve")},
+        {QStringLiteral("message"), QStringLiteral("again")},
+        {QStringLiteral("at"), at},
+        {QStringLiteral("kind"), QStringLiteral("echo")},
+    }});
+    QCOMPARE(m.get(2).value(QStringLiteral("at")).toLongLong(), at);
+    QCOMPARE(m.get(2).value(QStringLiteral("kind")).toString(), QStringLiteral("echo"));
 }
 
 QTEST_MAIN(TestLogModel)

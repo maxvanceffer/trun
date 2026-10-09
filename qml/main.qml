@@ -3,6 +3,7 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import QtQuick.Window
 import QWindowKit
+import "Ui"
 
 Window {
     id: root
@@ -160,7 +161,7 @@ Window {
         property alias rememberChoice: rememberBox.checked
 
         background: Rectangle {
-            color: Theme.cardBackground
+            color: Theme.backgroundDefault // modal content: bg-default
             border.color: Theme.border
             radius: 8
         }
@@ -204,7 +205,7 @@ Window {
                     Layout.alignment: Qt.AlignVCenter
                     radius: 4
                     color: "transparent"
-                    border.color: rememberBox.checked ? Theme.accent : "#555"
+                    border.color: rememberBox.checked ? Theme.accent : Theme.border
                     border.width: 1
 
                     Label {
@@ -243,48 +244,21 @@ Window {
 
                 Item { Layout.fillWidth: true }
 
-                Button {
+                UiButton {
                     Layout.preferredWidth: 110
-                    Layout.preferredHeight: 30
-                    font.pixelSize: 12
-
-                    background: Rectangle {
-                        radius: 6
-                        color: "transparent"
-                        border.color: Theme.border
-                        border.width: 1
-                    }
-
-                    contentItem: Label {
-                        text: "Leave running"
-                        color: Theme.textPrimary
-                        font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                    label: "Leave running"
+                    color: "secondary"
+                    variant: "outline"
+                    size: "sm"
                     onClicked: root.quitLeaveRemembered()
                 }
 
-                Button {
+                UiButton {
                     Layout.preferredWidth: 110
-                    Layout.preferredHeight: 30
-                    font.pixelSize: 12
-
-                    background: Rectangle {
-                        radius: 6
-                        color: Theme.destructive
-                    }
-
-                    contentItem: Label {
-                        text: "Kill processes"
-                        color: Theme.destructiveForeground
-                        font.pixelSize: 12
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                    label: "Kill processes"
+                    color: "error"
+                    variant: "solid"
+                    size: "sm"
                     onClicked: root.quitKillRemembered()
                 }
             }
@@ -334,6 +308,10 @@ Window {
         onDockerRequested: {
             root.activeView = "dashboard"
             dashboardView.openDocker()
+        }
+        onApiRequested: {
+            root.activeView = "dashboard"
+            dashboardView.openApi()
         }
 
         // Own traffic lights (untitled window has no native ones):

@@ -1,9 +1,16 @@
 import QtQuick 6.5
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 6.5
+import "Ui"
+pragma ComponentBehavior: Bound
 
 Item {
     id: delegateRoot
+
+    readonly property var lm: logModel // qmllint disable unqualified
+    readonly property var projSvc: projectService // qmllint disable unqualified
+    readonly property var settings: Settings // qmllint disable unqualified
+
     // Root nodes breathe: a small gap separates top-level folders.
     height: Theme.sidebarRowHeight + (depth === 0 ? Theme.spacingXs : 0)
     implicitWidth: 200
@@ -14,6 +21,8 @@ Item {
     required property bool expanded
     required property bool hasChildren
     required property int depth
+    required property var model
+    required property int row
 
     // Bind model role values to local properties
     readonly property string _type: model.item_type ?? ""
@@ -32,7 +41,7 @@ Item {
     // The single root node starts expanded so projects are visible.
     Component.onCompleted: {
         if (delegateRoot.isFolder && delegateRoot.depth === 0 && delegateRoot.hasChildren)
-            treeView.expand(row)
+            delegateRoot.treeView.expand(row)
     }
 
     signal folderClicked(string folderPath)
@@ -43,8 +52,8 @@ Item {
     property string iconSource: {
         if (delegateRoot.depth !== 0
             && (delegateRoot.isEntry || delegateRoot._hasManifests))
-            return iconBaseUrl + (Theme.isDark ? "file-terminal-dark.png" : "file-terminal.png")
-        return iconBaseUrl + (Theme.isDark ? "folders-dark.png" : "folders.png")
+            return Theme.icon("file")
+        return Theme.icon("folders")
     }
 
     Rectangle {
@@ -61,7 +70,7 @@ Item {
             if (delegateRoot.navigates && mouseArea.pressed)
                 return Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.35)
             if (delegateRoot.navigates && delegateRoot._folderPath !== ""
-                && treeView.selectedFolderPath === delegateRoot._folderPath)
+                && delegateRoot.treeView.selectedFolderPath === delegateRoot._folderPath) // qmllint disable missing-property
                 return Qt.rgba(Theme.accent.r, Theme.accent.g, Theme.accent.b, 0.25)
             return "transparent"
         }
@@ -75,13 +84,13 @@ Item {
         acceptedButtons: Qt.LeftButton
         onClicked: {
             if (delegateRoot.navigates) {
-                logModel.add("info", "sidebar", "Folder clicked: " + delegateRoot._folderPath)
+                delegateRoot.lm.add("info", "sidebar", "Folder clicked: " + delegateRoot._folderPath)
                 // Direct call: context properties resolve everywhere,
                 // unlike cross-file id lookups
-                projectService.selectFolder(delegateRoot._folderPath)
+                delegateRoot.projSvc.selectFolder(delegateRoot._folderPath)
                 delegateRoot.folderClicked(delegateRoot._folderPath)
             } else if (delegateRoot.isFolder) {
-                treeView.toggleExpanded(row)
+                delegateRoot.treeView.toggleExpanded(delegateRoot.row)
             }
         }
     }
@@ -89,7 +98,7 @@ Item {
     RowLayout {
         id: contentRow
         anchors.left: parent.left
-        anchors.leftMargin: depth * Theme.sidebarIndent
+        anchors.leftMargin: delegateRoot.depth * Theme.sidebarIndent
         anchors.right: parent.right
         anchors.rightMargin: Theme.spacingXs
         anchors.verticalCenter: bgRect.verticalCenter
@@ -103,8 +112,8 @@ Item {
             Layout.preferredHeight: (delegateRoot.isFolder && delegateRoot.hasChildren) ? Theme.iconXs : 0
             Layout.alignment: Qt.AlignVCenter
             source: delegateRoot.expanded
-                ? iconBaseUrl + (Theme.isDark ? "chevron-down-dark.png" : "chevron-down.png")
-                : iconBaseUrl + (Theme.isDark ? "chevron-right-dark.png" : "chevron-right.png")
+                ? Theme.icon("chevron-down")
+                : Theme.icon("chevron-right")
             sourceSize.width: Theme.iconSm
             sourceSize.height: Theme.iconSm
             fillMode: Image.PreserveAspectFit
@@ -118,7 +127,7 @@ Item {
             Layout.preferredWidth: Theme.iconSm
             Layout.preferredHeight: Theme.iconSm
             Layout.leftMargin: Theme.spacingXs
-            source: iconSource
+            source: delegateRoot.iconSource
             sourceSize.width: 32
             sourceSize.height: 32
             fillMode: Image.PreserveAspectFit
@@ -128,7 +137,7 @@ Item {
         // Name
         Label {
             id: nameLabel
-            text: _folderName
+            text: delegateRoot._folderName
             color: Theme.textPrimary
             font.pixelSize: Theme.fontSizeMd
             elide: Text.ElideRight
@@ -137,14 +146,14 @@ Item {
 
         UiTag {
             id: branchTag
-            readonly property bool branchVisible: Settings.showGitBranch && _gitBranch !== ""
-                && (!Settings.gitBranchTopOnly || depth === 0)
+            readonly property bool branchVisible: delegateRoot.settings.showGitBranch && delegateRoot._gitBranch !== ""
+                && (!delegateRoot.settings.gitBranchTopOnly || delegateRoot.depth === 0)
             visible: branchVisible
-            label: _gitBranch
+            label: delegateRoot._gitBranch
             color: "primary"
             variant: "subtle"
             size: "sm"
-            iconSource: iconBaseUrl + "git-branch.png"
+            iconSource: Theme.icon("git-branch")
             Layout.fillWidth: false
             Layout.alignment: Qt.AlignVCenter
             Layout.maximumWidth: 112

@@ -50,6 +50,10 @@ qt_add_executable(trun-app MACOSX_BUNDLE
     src/databaseservice.cpp
     src/dockerservice.h
     src/dockerservice.cpp
+    src/apiservice.h
+    src/apiservice.cpp
+    src/frameworkconsole.h
+    src/frameworkconsole.cpp
     src/updater.h
     src/updater.cpp
     src/mactitlebar.h
@@ -63,10 +67,8 @@ qt_add_qml_module(trun-app
         qml/main.qml
         qml/Sidebar.qml
         qml/Dashboard.qml
-        qml/Wizard.qml
         qml/WizardWindow.qml
         qml/CommandCard.qml
-        qml/TreeItem.qml
         qml/TreeItemDelegate.qml
         qml/Theme.qml
         qml/IconButton.qml
@@ -83,16 +85,28 @@ qt_add_qml_module(trun-app
         qml/UpdateAlert.qml
         qml/TrafficLights.qml
         qml/DatabasesPage.qml
+        qml/ConnectionDialog.qml
         qml/DockerPage.qml
+        qml/ApiPage.qml
+        qml/EnvironmentsDialog.qml
         qml/BusyLabel.qml
         qml/Spinner.qml
-        qml/UiSelectMenu.qml
-        qml/UiCheckBox.qml
-        qml/UiInput.qml
-        qml/UiTag.qml
-        qml/UiAlert.qml
-        qml/UiTooltip.qml
-        qml/UiIcon.qml
+        qml/Ui/UiSelectMenu.qml
+        qml/Ui/UiCheckBox.qml
+        qml/Ui/UiInput.qml
+        qml/Ui/UiTag.qml
+        qml/Ui/UiAlert.qml
+        qml/Ui/UiTooltip.qml
+        qml/Ui/UiIcon.qml
+        qml/Ui/UiButton.qml
+        qml/Ui/UiListElement.qml
+        qml/components/AppDialog.qml
+        qml/components/AppSwitch.qml
+        qml/components/ConfirmDialog.qml
+        qml/Ui/UiSegmented.qml
+        qml/Ui/UiLabeledSegmented.qml
+        qml/ConsoleParameters.qml
+        qml/ConsoleCommandCard.qml
     RESOURCES
         qml.qrc
 )
@@ -160,8 +174,8 @@ if(APPLE)
 endif()
 
 if(APPLE)
-    target_sources(trun-app PRIVATE src/mactitlebar.mm src/databaseservice_macos.cpp src/macappmenu.h src/macappmenu.mm)
-    target_link_libraries(trun-app PRIVATE "-framework AppKit")
+    target_sources(trun-app PRIVATE src/mactitlebar.mm src/databaseservice_macos.cpp src/macappmenu.h src/macappmenu.mm src/mackeychain.h src/mackeychain.mm)
+    target_link_libraries(trun-app PRIVATE "-framework AppKit" "-framework Security")
 elseif(UNIX)
     target_sources(trun-app PRIVATE src/databaseservice_linux.cpp)
 endif()
@@ -176,6 +190,8 @@ qt_add_executable(qmltests
     src/qmltests.cpp
     src/projectservice.h
     src/projectservice.cpp
+    src/frameworkconsole.h
+    src/frameworkconsole.cpp
     src/commandexecutor.h
     src/commandexecutor.cpp
     src/logmodel.h
@@ -189,7 +205,13 @@ qt_add_executable(qmltests
     src/settings.cpp
     src/mcpagents.h
     src/mcpagents.cpp
+    src/apiservice.h
+    src/apiservice.cpp
 )
+if(APPLE)
+    target_sources(qmltests PRIVATE src/mackeychain.h src/mackeychain.mm)
+    target_link_libraries(qmltests PRIVATE "-framework AppKit" "-framework Security")
+endif()
 
 # Include QML resources so qrc:/icons/... paths work in tests
 # Note: qml.qrc is primarily for the main app (trun-app)
@@ -274,6 +296,8 @@ add_executable(test_mcpserver
     src/dockerservice.cpp
     src/projectservice.h
     src/projectservice.cpp
+    src/frameworkconsole.h
+    src/frameworkconsole.cpp
     src/commandexecutor.h
     src/commandexecutor.cpp
     src/projectlistmodel.h
@@ -319,6 +343,8 @@ add_executable(test_projectservice
     src/test_projectservice.cpp
     src/projectservice.h
     src/projectservice.cpp
+    src/frameworkconsole.h
+    src/frameworkconsole.cpp
     src/commandexecutor.h
     src/commandexecutor.cpp
     src/projectlistmodel.h
@@ -339,6 +365,8 @@ add_executable(test_roots
     src/test_roots.cpp
     src/projectservice.h
     src/projectservice.cpp
+    src/frameworkconsole.h
+    src/frameworkconsole.cpp
     src/commandexecutor.h
     src/commandexecutor.cpp
     src/projectlistmodel.h

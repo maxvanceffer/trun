@@ -27,7 +27,7 @@ QString levelFromHttpStatus(int status)
     return QStringLiteral("INFO");
 }
 
-// JSON-ветка: zap/logrus-JSON/tracing-Json и любой объект с msg+level.
+// JSON branch: zap/logrus JSON/tracing-Json and any object with msg+level.
 ParsedLogLine tryJson(const QString &line, bool &attempted)
 {
     attempted = false;
@@ -137,26 +137,26 @@ ParsedLogLine LogParser::parse(const QString &raw)
     if (line.isEmpty())
         return out;
 
-    // 1. JSON-объект.
+    // 1. A JSON object.
     bool jsonAttempted = false;
     ParsedLogLine asJson = tryJson(line, jsonAttempted);
     if (jsonAttempted)
-        return asJson; // ok либо честный fallback, дальше не идём
+        return asJson; // ok or an honest fallback; do not proceed further
 
-    // 2. Docker-обёртка --timestamps: RFC3339Nano + тело, каналы склеены.
+    // 2. Docker --timestamps wrapper: RFC3339Nano + body, channels merged.
     {
         static const QRegularExpression docker(
             QStringLiteral("^(\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:?\\d{2}?))\\s+([\\s\\S]*)$"));
         const auto m = docker.match(line);
         if (m.hasMatch()) {
-            ParsedLogLine inner = parse(m.captured(2)); // рекурсия, глубина 1
+            ParsedLogLine inner = parse(m.captured(2)); // recursion, depth 1
             if (inner.ok && inner.layerTimestamp.isEmpty())
                 inner.layerTimestamp = m.captured(1);
             return inner;
         }
     }
 
-    // 3a. Monolog LineFormatter на всей строке (файловые логи, слоя 1 нет).
+    // 3a. Monolog LineFormatter on the whole line (file logs, no layer 1).
     {
         static const QRegularExpression monologA(
             QStringLiteral("^\\[([^\\]]+)\\]\\s*([^.\\[]+)\\.([A-Za-z]+):\\s*([\\s\\S]*)$"));
@@ -171,8 +171,8 @@ ParsedLogLine LogParser::parse(const QString &raw)
         }
     }
 
-    // 4. Слой 1 trun: [HH:mm:ss.zzz] label: body.
-    // target без :[] — иначе apache-error "[..] [core:error] .." режется неверно.
+    // 4. Layer 1 trun: [HH:mm:ss.zzz] label: body.
+    // target without :[] — otherwise apache-error "[..] [core:error] .." is split wrongly.
     QString target;
     QString body = line;
     {
@@ -187,7 +187,7 @@ ParsedLogLine LogParser::parse(const QString &raw)
     }
     out.target = target;
 
-    // 3b. Symfony ConsoleFormatter тела.
+    // 3b. Symfony ConsoleFormatter of the body.
     {
         static const QRegularExpression consoleB(
             QStringLiteral("^(\\d{2}:\\d{2}:\\d{2})\\s+([A-Za-z]+)\\s+\\[([^\\]]+)\\]\\s*([\\s\\S]*)$"));
@@ -201,7 +201,7 @@ ParsedLogLine LogParser::parse(const QString &raw)
         }
     }
 
-    // 3c. Кастом [channel] Mon DD HH:MM:SS |LEVEL| [SUB] msg.
+    // 3c. Custom [channel] Mon DD HH:MM:SS |LEVEL| [SUB] msg.
     {
         static const QRegularExpression customC(
             QStringLiteral("^\\[([^\\]]+)\\]\\s*[A-Z][a-z]{2}\\s+\\d{1,2}\\s+\\d{2}:\\d{2}:\\d{2}\\s*\\|([A-Za-z]+)\\s*\\|\\s*(?:([A-Za-z0-9_]+)\\s+)?([\\s\\S]*)$"));
@@ -240,7 +240,7 @@ ParsedLogLine LogParser::parse(const QString &raw)
         }
     }
 
-    // logrus logfmt без TTY: time=".." level=.. msg="..".
+    // logrus logfmt without a TTY: time=".." level=.. msg="..".
     {
         static const QRegularExpression lTime(QStringLiteral("(?:^|\\s)time=\"([^\"]+)\""));
         static const QRegularExpression lLevel(QStringLiteral("(?:^|\\s)level=([A-Za-z]+)"));
@@ -331,7 +331,7 @@ ParsedLogLine LogParser::parse(const QString &raw)
         }
     }
 
-    // Access-логи: combined/CLF. Уровня нет — эвристика по статусу.
+    // Access logs: combined/CLF. No level — status-code heuristic.
     {
         static const QRegularExpression access(
             QStringLiteral("^(\\S+)\\s+\\S+\\s+\\S+\\s+\\[([^\\]]+)\\]\\s+\"([A-Z]+)\\s+(\\S+)(?:\\s+\\S+\")?\"?\\s+(\\d{3})\\s+(\\S+)([\\s\\S]*)$"));
@@ -389,5 +389,5 @@ ParsedLogLine LogParser::parse(const QString &raw)
         }
     }
 
-    return out; // fallback: ok=false, сырая строка для substring-поиска
+    return out; // fallback: ok=false, the raw line for substring search
 }

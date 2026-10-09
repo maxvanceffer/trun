@@ -1,13 +1,15 @@
 import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
+import "../"
+pragma ComponentBehavior: Bound
 
-// UiCheckBox — чекбокс в визуале Nuxt UI Checkbox: бокс 18px с радиусом,
-// пустой с ring-границей; checked — заливка accent с чёрной галкой
-// (check.png читается на accent в обеих темах, поэтому без -dark пары).
-// Состояние хранит потребитель: checked — биндинг сверху, переключение
-// уходит наружу через toggled (внутри checked не присваиваем, чтобы не
-// рвать биндинг).
+// UiCheckBox — checkbox styled after Nuxt UI Checkbox: an 18px box with
+// a radius, empty with a ring border; checked is filled with accent and
+// a black checkmark (check.png reads on accent in both themes, hence no
+// -dark pair). The state is owned by the consumer: `checked` is bound
+// from above, the toggle goes out via the toggled signal (never assign
+// to checked inside — that would break the binding).
 RowLayout {
     id: root
     spacing: 8
@@ -17,7 +19,7 @@ RowLayout {
 
     signal toggled(bool on)
 
-    // Размер/радиус бокса — специфичны для компонента.
+    // Box size/radius are specific to this component.
     readonly property int boxSize: 18
     readonly property int boxRadius: 4
 
@@ -37,7 +39,7 @@ RowLayout {
             width: 12
             height: 12
             visible: root.checked
-            source: iconBaseUrl + "check.png"
+            source: Theme.icon("check")
             sourceSize.width: 24
             sourceSize.height: 24
             fillMode: Image.PreserveAspectFit

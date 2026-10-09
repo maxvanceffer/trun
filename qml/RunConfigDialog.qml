@@ -3,13 +3,17 @@ import QtQuick.Controls
 import QtQuick.Controls.Basic
 import QtQuick.Dialogs
 import QtQuick.Layouts
+import "Ui"
+pragma ComponentBehavior: Bound
 
 // In-app Run Configuration dialog (PhpStorm-style, without tabs/runtime/before-launch).
 // Rendered inside the window via Dialog, never as a separate Window.
 Dialog {
     id: runConfigDialog
 
-    // Storage key in Settings (JSON string) + defaults from the detected command
+    readonly property var settings: Settings // qmllint disable unqualified
+
+    // Storage key in settings (JSON string) + defaults from the detected command
     property string configKey: ""
     property string defaultName: ""
     property string defaultExecutable: ""
@@ -25,7 +29,7 @@ Dialog {
     signal commandCreated(var config)
 
     function loadConfig() {
-        var raw = configKey !== "" ? Settings.get(configKey, "") : ""
+        var raw = configKey !== "" ? settings.get(configKey, "") : ""
         var cfg = {}
         if (raw !== "") {
             try { cfg = JSON.parse(raw.toString()) } catch (e) { cfg = {} }
@@ -83,7 +87,7 @@ Dialog {
             return
         }
         if (configKey !== "")
-            Settings.set(configKey, JSON.stringify(currentConfig()))
+            settings.set(configKey, JSON.stringify(currentConfig()))
         saved()
         close()
     }
@@ -95,7 +99,7 @@ Dialog {
     padding: 0
 
     background: Rectangle {
-        color: Theme.cardBackground
+        color: Theme.backgroundDefault // modal content: bg-default
         border.color: Theme.border
         radius: 8
     }
@@ -140,50 +144,13 @@ Dialog {
                 }
             }
 
-            Item {
+            UiCheckBox {
                 id: allowBox
-                property bool checked: false
-                Layout.preferredWidth: 18
-                Layout.preferredHeight: 18
                 Layout.alignment: Qt.AlignVCenter
-                Accessible.role: Accessible.CheckBox
-                Accessible.name: qsTr("Allow multiple instances")
-                activeFocusOnTab: true
-
-                Rectangle {
-                    anchors.fill: parent
-                    radius: 4
-                    color: "transparent"
-                    border.color: allowBox.checked ? Theme.accent : "#555"
-                    border.width: 1
-
-                    Label {
-                        anchors.centerIn: parent
-                        text: "✓"
-                        color: Theme.accent
-                        font.pixelSize: 12
-                        visible: allowBox.checked
-                    }
-                }
-
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: allowBox.checked = !allowBox.checked
-                }
-
-                Keys.onSpacePressed: allowBox.checked = !allowBox.checked
-            }
-
-            Label {
-                text: qsTr("Allow multiple instances")
-                color: Theme.textMuted
-                font.pixelSize: 12
-                Layout.alignment: Qt.AlignVCenter
-
-                MouseArea {
-                    anchors.fill: parent
-                    onClicked: allowBox.checked = !allowBox.checked
-                }
+                label: qsTr("Allow multiple instances")
+                // State lives on the checkbox (loadConfig/openCreate write it
+                // directly); toggled only reports the new value.
+                onToggled: function(on) { allowBox.checked = on }
             }
         }
 
@@ -244,7 +211,7 @@ Dialog {
 
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
-                iconSource: iconBaseUrl + (Theme.isDark ? "folders-dark.png" : "folders.png")
+                iconSource: Theme.icon("folders")
                 tooltipText: qsTr("Browse")
                 onClicked: workdirPicker.open()
             }
@@ -299,8 +266,8 @@ Dialog {
                 font.pixelSize: 12
                 font.family: "Menlo"
                 color: Theme.textPrimary
-                placeholderText: defaultPort > 0
-                    ? qsTr("detected :%1 — override or leave as is").arg(defaultPort)
+                placeholderText: runConfigDialog.defaultPort > 0
+                    ? qsTr("detected :%1 — override or leave as is").arg(runConfigDialog.defaultPort)
                     : qsTr("optional, e.g. 5173")
                 validator: IntValidator { bottom: 1; top: 65535 }
                 background: Rectangle {
@@ -358,48 +325,21 @@ Dialog {
 
             Item { Layout.fillWidth: true }
 
-            Button {
+            UiButton {
                 Layout.preferredWidth: 110
-                Layout.preferredHeight: 30
-                font.pixelSize: 12
-
-                background: Rectangle {
-                    radius: 6
-                    color: "transparent"
-                    border.color: Theme.border
-                    border.width: 1
-                }
-
-                contentItem: Label {
-                    text: qsTr("Cancel")
-                    color: Theme.textPrimary
-                    font.pixelSize: 12
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
+                label: qsTr("Cancel")
+                color: "secondary"
+                variant: "outline"
+                size: "sm"
                 onClicked: runConfigDialog.close()
             }
 
-            Button {
+            UiButton {
                 Layout.preferredWidth: 110
-                Layout.preferredHeight: 30
-                font.pixelSize: 12
-
-                background: Rectangle {
-                    radius: 6
-                    color: Theme.primary
-                }
-
-                contentItem: Label {
-                    text: runConfigDialog.createMode ? qsTr("Add") : qsTr("Save")
-                    color: Theme.primaryForeground
-                    font.pixelSize: 12
-                    font.bold: true
-                    horizontalAlignment: Text.AlignHCenter
-                    verticalAlignment: Text.AlignVCenter
-                }
-
+                label: runConfigDialog.createMode ? qsTr("Add") : qsTr("Save")
+                color: "primary"
+                variant: "solid"
+                size: "sm"
                 onClicked: runConfigDialog.saveDialog()
             }
         }

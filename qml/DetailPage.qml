@@ -2,9 +2,18 @@ import QtQuick
 import QtQuick.Controls
 import QtQuick.Layouts
 import "ConsoleFormat.js" as ConsoleFormat
+import "Ui"
+pragma ComponentBehavior: Bound
 
 Item {
     id: detailRoot
+
+    readonly property var projSvc: projectService // qmllint disable unqualified
+    readonly property var exec: commandExecutor // qmllint disable unqualified
+    readonly property var cmdLog: commandLog // qmllint disable unqualified
+    readonly property var settings: Settings // qmllint disable unqualified
+    readonly property var dash: dashboard // qmllint disable unqualified
+    readonly property var tm: treeModel // qmllint disable unqualified
 
     // Opaque backdrop: without it the grid shows through the page
     Rectangle {
@@ -32,19 +41,51 @@ Item {
     }
 
     readonly property var command: {
-        var cmds = projectService.activeProjectCommands
-        for (var i = 0; i < cmds.length; ++i) {
-            if (cmds[i] && cmds[i].id === bareId)
-                return cmds[i]
+        // The owning project first (project-scoped run key), then the
+        // active project. Folder-page cards belong to projects that were
+        // never selected.
+        var pid = detailRoot.projectId
+        var all = projSvc.projects()
+        for (var p = 0; p < all.length; ++p) {
+            var proj = all[p]
+            if (!proj || (pid !== "" && (proj.id || "") !== pid))
+                continue
+            var list = proj.commands || []
+            for (var i = 0; i < list.length; ++i) {
+                if (list[i] && list[i].id === bareId)
+                    return list[i]
+            }
+        }
+        var cmds = projSvc.activeProjectCommands
+        for (var j = 0; j < cmds.length; ++j) {
+            if (cmds[j] && cmds[j].id === bareId)
+                return cmds[j]
         }
         return {}
     }
+    // Owning project object (by the run key's project id); falls back to
+    // the active project for bare ids.
+    readonly property var owningProject: {
+        var pid = detailRoot.projectId
+        if (pid !== "") {
+            var all = projSvc.projects()
+            for (var p = 0; p < all.length; ++p) {
+                if (all[p] && (all[p].id || "") === pid)
+                    return all[p]
+            }
+        }
+        return projSvc.activeProject
+    }
 
     readonly property bool isRunning: commandId !== ""
-        && commandExecutor.runningCommandIds.indexOf(commandId) >= 0
+        && exec.runningCommandIds.indexOf(commandId) >= 0
 
     // commandId is the project-scoped run key "<projectId>|<cmdId>":
     // bare command ids (npm:serve) repeat across projects.
+    readonly property string projectId: {
+        var i = commandId.lastIndexOf("|")
+        return i < 0 ? "" : commandId.slice(0, i)
+    }
     readonly property string bareId: {
         var i = commandId.lastIndexOf("|")
         return i < 0 ? commandId : commandId.slice(i + 1)
@@ -58,7 +99,7 @@ Item {
     property real ramFraction: -1
 
     // Effective run configuration (defaults from the detected command,
-    // overrides stored as JSON in Settings per project+command)
+    // overrides stored as JSON in settings per project+command)
     property string cfgName: ""
     property string cfgExecutable: ""
     property string cfgArgsText: ""
@@ -68,8 +109,8 @@ Item {
     property int cfgPort: 0
 
     readonly property string configKey: bareId !== ""
-        && projectService.activeProject.id !== undefined
-        ? "runConfig/" + projectService.activeProject.id + "/" + bareId : ""
+        && detailRoot.owningProject.id !== undefined
+        ? "runConfig/" + (detailRoot.owningProject.id || "") + "/" + bareId : ""
 
     function splitArgs(text) {
         var args = []
@@ -107,7 +148,7 @@ Item {
         var c = detailRoot.command
         var defExe = c.command || ""
         var defArgs = c.args ? c.args.join(" ") : ""
-        var defWorkdir = projectService.activeProject.project_path || ""
+        var defWorkdir = detailRoot.owningProject.project_path || ""
         cfgName = c.label || ""
         cfgExecutable = defExe
         cfgArgsText = defArgs
@@ -116,7 +157,7 @@ Item {
         cfgAllowMultiple = false
         cfgPort = (c.detectedPort || 0) > 0 ? c.detectedPort : 0
         if (configKey === "") return
-        var raw = Settings.get(configKey, "")
+        var raw = settings.get(configKey, "")
         if (raw === "") return
         try {
             var cfg = JSON.parse(raw.toString())
@@ -130,17 +171,34 @@ Item {
         } catch (e) {}
     }
 
+    // Run persists the panel values first (secrets excluded from
+    // storage), then passes the in-memory values — runCommandEffective
+    // merges them over the saved argsValues and assembles the args.
+    function runConsoleCommand() {
+        if (!paramsPanel.canRun) {
+            paramsPanel.focusFirstRequired()
+            return
+        }
+        paramsPanel.persistValues()
+        projSvc.runCommandEffectiveWithValues(detailRoot.owningProject.id || "",
+                                              detailRoot.bareId, paramsPanel.values)
+    }
+
     function requestRun() {
-        var sniffed = dashboard.detectedPorts[detailRoot.commandId] || 0
+        if (detailRoot.isConsoleCommand) {
+            runConsoleCommand()
+            return
+        }
+        var sniffed = dash.detectedPorts[detailRoot.commandId] || 0
         if (cfgPort > 0 && sniffed > 0 && sniffed !== cfgPort) {
-            dashboard.appendCommandLine(detailRoot.commandId, "system",
+            dash.appendCommandLine(detailRoot.commandId, "system",
                 detailRoot.command.label || "cmd",
                 "Detected port " + sniffed + " differs from configured " + cfgPort
                 + " — update it in Run configuration?")
         }
         var checkPort = sniffed > 0 ? sniffed : cfgPort
         if (checkPort > 0) {
-            var occupant = commandExecutor.pidOnPort(checkPort)
+            var occupant = exec.pidOnPort(checkPort)
             if (occupant > 0 && occupant !== pidNum) {
                 portBusyDialog.port = checkPort
                 portBusyDialog.pid = occupant
@@ -155,11 +213,11 @@ Item {
         var exe = cfgExecutable !== "" ? cfgExecutable : detailRoot.command.command || ""
         var args = splitArgs(cfgArgsText)
         var workdir = cfgWorkdir !== "" ? cfgWorkdir
-            : projectService.activeProject.project_path || ""
+            : detailRoot.owningProject.project_path || ""
         var label = cfgName !== "" ? cfgName : detailRoot.command.label || "cmd"
         if (detailRoot.isRunning && !cfgAllowMultiple)
-            commandExecutor.stopCommand(detailRoot.commandId)
-        commandExecutor.runWithEnv(exe, args, workdir, label,
+            exec.stopCommand(detailRoot.commandId)
+        exec.runWithEnv(exe, args, workdir, label,
                                    detailRoot.commandId, splitEnv(cfgEnvText))
     }
 
@@ -190,30 +248,52 @@ Item {
 
     // Single-text console: one TextEdit, so selection and copy can span
     // multiple lines (per-delegate TextEdits only select one row).
-    function consoleColorFor(level) {
-        if (level === "error" || level === "stderr") return Theme.destructive
-        if (level === "warn") return "#ff9800"
-        if (level === "system") return "#9c27b0"
-        return Theme.textPrimary
-    }
-
+    // Run-style rows: a relative elapsed gutter ("+0.42s" from the run
+    // start) plus the message; the launch line renders in the echo color.
     function formatConsoleRow(e) {
         var msg = e.message || ""
-        // Жирные строки (SQL на десятки КБ) режем для глаз; полное тело
-        // остаётся в модели и копируется через «Длинные целиком».
+        // Oversized lines (tens-of-KB SQL) are trimmed for readability;
+        // the full body stays in the model and is copied via "Full lines".
         if (!detailRoot.showLongFull && msg.length > 500)
             msg = msg.slice(0, 500) + "… [обрезано]"
-        return ConsoleFormat.formatLine(e.timestamp || "", e.target || "",
-            msg, consoleColorFor(e.level || ""))
+        var elapsed = (e.at || 0) - detailRoot.runStartMs
+        return ConsoleFormat.formatLine(elapsed, msg, e.kind || "",
+            Theme.textSubtle, Theme.warning)
     }
 
     function rebuildConsole() {
         var parts = []
-        var n = commandLog.count()
+        var n = cmdLog.count()
         for (var i = 0; i < n; ++i)
-            parts.push(detailRoot.formatConsoleRow(commandLog.get(i)))
+            parts.push(detailRoot.formatConsoleRow(cmdLog.get(i)))
+        // Rebuild covers everything: drop rows buffered while off-page or
+        // mid-reset so the flush timer cannot duplicate them.
+        detailRoot.pendingRows = []
         detailRoot.consoleHtml = parts.join("")
     }
+
+    // Chips recompute on a debounce: observedLevels()/observedChannels()
+    // scan every entry, so recomputing them per countsChanged (i.e. per
+    // streamed line) is O(N) per line on top of the console itself.
+    property int chipsRev: 0
+
+    Timer {
+        id: chipsDebounce
+        interval: 400
+        onTriggered: detailRoot.chipsRev++
+    }
+
+    Connections {
+        target: detailRoot.cmdLog
+        function onCountsChanged() {
+            chipsDebounce.restart()
+        }
+    }
+
+    readonly property var observedLevelsChips:
+        chipsRev >= 0 ? detailRoot.cmdLog.observedLevels() : []
+    readonly property var observedChannelsChips:
+        chipsRev >= 0 ? detailRoot.cmdLog.observedChannels() : []
 
     // Single HTML source for the console view: appending straight to
     // TextEdit.text round-trips through the document serializer and the
@@ -221,14 +301,57 @@ Item {
     property string consoleHtml: ""
     onConsoleHtmlChanged: consoleTextEdit.text = consoleHtml
 
-    // Console filters (Variant A): search + time presets + chips from
-    // observed values. Engine lives in LogModel; here only the panel.
+    // Console filters: search + chips from observed values. Engine lives
+    // in LogModel; here only the panel.
     property string filterQuery: ""
     property var selLevels: []
     property var selChannels: []
-    property int sinceMin: -1
     property bool showLongFull: false
-    readonly property var timeValues: [-1, 5, 10, 30]
+
+    // Run selector ("#1 · 13:31:50 · exit 0"): the console shows one run
+    // segment at a time. Null-guarded for standalone/test harnesses.
+    readonly property var runEntries: {
+        var d = detailRoot.dash
+        return (d && detailRoot.commandId !== "") ? d.runMenu(detailRoot.commandId) : []
+    }
+    readonly property int currentRunSeq: {
+        var d = detailRoot.dash
+        return (d && detailRoot.commandId !== "") ? d.selectedRunSeq(detailRoot.commandId) : 0
+    }
+    readonly property int runIndex: {
+        var entries = detailRoot.runEntries
+        for (var i = 0; i < entries.length; ++i) {
+            if (entries[i].seq === detailRoot.currentRunSeq)
+                return i
+        }
+        return -1
+    }
+    // ms epoch: double, NOT int — a 32-bit int overflows epoch millis
+    // and the gutter counts from ~1970 ("+29850022:52").
+    readonly property double runStartMs: {
+        var d = detailRoot.dash
+        return (d && detailRoot.commandId !== "") ? d.runStartMs(detailRoot.commandId, detailRoot.currentRunSeq) : 0
+    }
+
+    function showRunSeq(seq) {
+        var d = detailRoot.dash
+        if (d && detailRoot.commandId !== "")
+            d.showRun(detailRoot.commandId, seq)
+        // showRun refills the model (clear + addBatch), which rebuilds
+        // the console through onModelReset; sync the selector with it.
+        detailRoot.syncRunBox()
+    }
+
+    function syncRunBox() {
+        // Guarded: runs evaluate during creation, before the box exists.
+        if (typeof runBox !== "undefined" && runBox)
+            runBox.currentIndex = detailRoot.runIndex
+    }
+
+    // Runs open/close live (start/finish reassign the maps): keep the
+    // selector on the selected segment without touching the model.
+    onRunEntriesChanged: syncRunBox()
+    onRunIndexChanged: syncRunBox()
 
     function toggleSel(arr, v) {
         var out = arr.slice()
@@ -238,29 +361,27 @@ Item {
     }
 
     function applyLogFilters() {
-        commandLog.setFilters(filterQuery, selLevels, selChannels, sinceMin)
+        cmdLog.setFilters(filterQuery, selLevels, selChannels, -1)
     }
 
     function resetLogFilters() {
         filterQuery = ""
         selLevels = []
         selChannels = []
-        sinceMin = -1
         searchField.text = ""
-        timeBox.currentIndex = 0
-        commandLog.resetFilters()
+        cmdLog.resetFilters()
     }
 
     function refreshStats() {
         if (commandId === "") return
-        pidNum = commandExecutor.pidForCommand(commandId)
-        var kb = commandExecutor.memoryForCommand(commandId)
-        var cpu = commandExecutor.cpuForCommand(commandId)
-        var total = commandExecutor.totalMemoryKb()
+        pidNum = exec.pidForCommand(commandId)
+        var kb = exec.memoryForCommand(commandId)
+        var cpu = exec.cpuForCommand(commandId)
+        var total = exec.totalMemoryKb()
         memText = formatMem(kb)
         cpuText = formatCpu(cpu)
         cpuFraction = (cpu < 0) ? -1 : Math.min(cpu / 100, 1)
-        uptimeText = formatUptime(commandExecutor.elapsedForCommand(commandId))
+        uptimeText = formatUptime(exec.elapsedForCommand(commandId))
         ramFraction = (kb > 0 && total > 0) ? Math.min(kb / total, 1) : -1
     }
 
@@ -270,12 +391,14 @@ Item {
         cpuText = "—"
         uptimeText = "—"
         ramFraction = -1
-        // Новый Command — новый поток: фильтры сбрасываем (session-only).
+        // A new command means a new stream: reset the (session-only)
+        // filters.
         detailRoot.resetLogFilters()
         // The command object (and its default args) is derived from commandId
         // and only settles after bindings update, so load on the next tick.
         Qt.callLater(detailRoot.loadEffectiveConfig)
         detailRoot.rebuildConsole()
+        detailRoot.syncRunBox()
         if (isRunning) refreshStats()
     }
 
@@ -286,19 +409,45 @@ Item {
         if (visible) {
             loadEffectiveConfig()
             rebuildConsole()
+            syncRunBox()
             refreshStats()
         }
     }
 
+    // Live appends are buffered and flushed on a short timer: assigning
+    // consoleHtml re-parses the whole RichText document in the TextEdit,
+    // so doing it per line is O(N²) while a process streams output.
+    property var pendingRows: []
+
+    function flushPendingRows() {
+        if (pendingRows.length === 0) return
+        var parts = []
+        for (var i = 0; i < pendingRows.length; ++i)
+            parts.push(detailRoot.formatConsoleRow(pendingRows[i]))
+        pendingRows = []
+        detailRoot.consoleHtml += parts.join("")
+    }
+
+    Timer {
+        id: appendFlush
+        interval: 120
+        onTriggered: detailRoot.flushPendingRows()
+    }
+
     Connections {
-        target: commandLog
+        target: detailRoot.cmdLog
         function onRowsInserted(parent, first, last) {
-            var parts = []
             for (var i = first; i <= last; ++i)
-                parts.push(detailRoot.formatConsoleRow(commandLog.get(i)))
-            detailRoot.consoleHtml += parts.join("")
+                detailRoot.pendingRows.push(detailRoot.cmdLog.get(i))
+            appendFlush.restart()
         }
-        function onModelReset() { detailRoot.rebuildConsole() }
+        function onModelReset() {
+            // A reset is a full reload (clear or addBatch): the flush
+            // timer must not append buffered rows on top of the rebuild.
+            detailRoot.pendingRows = []
+            appendFlush.stop()
+            detailRoot.rebuildConsole()
+        }
     }
 
     Timer {
@@ -327,12 +476,12 @@ Item {
         StatCard {
             title: "Status"
             value: detailRoot.isRunning ? "Running" : "Stopped"
-            valueColor: detailRoot.isRunning ? "#22c55e" : Theme.destructive
+            valueColor: detailRoot.isRunning ? Theme.success : Theme.error
             sub: (detailRoot.cfgExecutable || detailRoot.command.command || "")
                 + (detailRoot.cfgArgsText !== "" ? " " + detailRoot.cfgArgsText
                    : detailRoot.command.args ? " " + detailRoot.command.args.join(" ") : "")
             showDot: true
-            dotColor: detailRoot.isRunning ? "#22c55e" : Theme.destructive
+            dotColor: detailRoot.isRunning ? Theme.success : Theme.error
             dotPulsing: detailRoot.isRunning
             Layout.fillWidth: true
         }
@@ -349,7 +498,7 @@ Item {
             value: detailRoot.memText
             sub: "resident"
             ringFraction: detailRoot.ramFraction
-            ringColor: "#22c55e"
+            ringColor: Theme.success
             Layout.fillWidth: true
         }
 
@@ -358,7 +507,7 @@ Item {
             value: detailRoot.cpuText
             sub: "cpu usage"
             ringFraction: detailRoot.cpuFraction
-            ringColor: "#60a5fa"
+            ringColor: Theme.info
             Layout.fillWidth: true
         }
 
@@ -370,22 +519,47 @@ Item {
         }
     }
 
-    // Actions row: run configuration (cog) + Run / Stop
-    Item {
-        id: actionsRow
+    // Framework console commands (argsMeta present) get the inline
+    // parameters panel between the stat cards and the actions row.
+    readonly property bool isConsoleCommand: (command !== undefined
+        && command !== null && command.argsMeta !== undefined
+        && command.argsMeta !== null && command.argsMeta.length > 0)
+
+    ConsoleParameters {
+        id: paramsPanel
+        visible: detailRoot.isConsoleCommand
         anchors.top: statsRow.bottom
         anchors.topMargin: 8
         anchors.left: parent.left
-        anchors.leftMargin: 8
+        anchors.leftMargin: Theme.spacingLg
         anchors.right: parent.right
-        anchors.rightMargin: 8
+        anchors.rightMargin: Theme.spacingLg
+        // Collapsed keeps the header row visible; expanded fits content.
+        height: visible ? paramsPanel.implicitHeight : 0
+        projectId: detailRoot.projectId
+        commandId: detailRoot.bareId
+        command: detailRoot.command
+        commandName: detailRoot.command.label || detailRoot.bareId
+        running: detailRoot.isRunning
+        onCommandChanged: Qt.callLater(paramsPanel.reload)
+    }
+
+    // Actions row: run configuration (cog) + Run / Stop
+    Item {
+        id: actionsRow
+        anchors.top: paramsPanel.visible ? paramsPanel.bottom : statsRow.bottom
+        anchors.topMargin: 8
+        anchors.left: parent.left
+        anchors.leftMargin: Theme.spacingLg
+        anchors.right: parent.right
+        anchors.rightMargin: Theme.spacingLg
         height: 40
 
         IconButton {
             id: configurationBtn
             anchors.left: parent.left
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: iconBaseUrl + (Theme.isDark ? "cog-dark.png" : "cog.png")
+            iconSource: Theme.icon("cog")
             tooltipText: qsTr("Run configuration")
             onClicked: runConfigDialog.openDialog()
         }
@@ -395,9 +569,9 @@ Item {
             anchors.left: configurationBtn.right
             anchors.leftMargin: 8
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: iconBaseUrl + (Theme.isDark ? "folder-code-dark.png" : "folder-code.png")
+            iconSource: Theme.icon("folder-code")
             tooltipText: qsTr("Reveal in Finder")
-            onClicked: commandExecutor.revealFolder(projectService.activeProject.project_path || "")
+            onClicked: detailRoot.exec.revealFolder(detailRoot.owningProject.project_path || "")
         }
 
         IconButton {
@@ -405,12 +579,12 @@ Item {
             anchors.left: revealFolderBtn.right
             anchors.leftMargin: 8
             anchors.verticalCenter: parent.verticalCenter
-            iconSource: iconBaseUrl + (Theme.isDark ? "square-menu-dark.png" : "square-menu.png")
+            iconSource: Theme.icon("pin")
             tooltipText: pinned ? qsTr("Unpin from tray menu") : qsTr("Pin to tray menu")
             active: pinned
-            property string projectId: (projectService.activeProject.id || "").toString()
+            property string projectId: (detailRoot.owningProject.id || "").toString()
             // Depends on pinnedCommands so the tint follows pinnedChanged
-            property var pinList: projectService.pinnedCommands
+            property var pinList: detailRoot.projSvc.pinnedCommands
             property bool pinned: {
                 if (projectId === "" || detailRoot.bareId === "") return false
                 for (var i = 0; i < pinList.length; ++i) {
@@ -422,39 +596,29 @@ Item {
             }
             onClicked: {
                 if (projectId === "" || detailRoot.bareId === "") return
-                projectService.setPinned(projectId, detailRoot.bareId, !pinned)
+                detailRoot.projSvc.setPinned(projectId, detailRoot.bareId, !pinned)
             }
         }
 
         // Run / Stop
-        Button {
+        UiButton {
             id: runStopButton
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             width: Math.max(160, (detailRoot.width - 32) / 3)
-            height: 40
-            text: detailRoot.isRunning ? "Stop" : "Run"
-            font.pixelSize: 13
-
-            background: Rectangle {
-                radius: 8
-                color: detailRoot.isRunning ? Theme.destructive : Theme.primary
-            }
-
-            contentItem: Label {
-                text: parent.text
-                color: detailRoot.isRunning ? Theme.destructiveForeground : Theme.primaryForeground
-                font.pixelSize: 13
-                font.bold: true
-                horizontalAlignment: Text.AlignHCenter
-                verticalAlignment: Text.AlignVCenter
-            }
-
+            label: detailRoot.isRunning ? "Stop" : "Run"
+            color: detailRoot.isRunning ? "error" : "primary"
+            variant: "solid"
+            size: "md"
+            // Run is gated on the required positionals (design: Run
+            // stays dark until they are filled); Stop always works.
+            enabled: detailRoot.isRunning
+                || !(detailRoot.isConsoleCommand && !paramsPanel.canRun)
             onClicked: {
                 if (detailRoot.isRunning && detailRoot.cfgAllowMultiple) {
                     detailRoot.runEffective()
                 } else if (detailRoot.isRunning) {
-                    commandExecutor.stopCommand(detailRoot.commandId)
+                    detailRoot.exec.stopCommand(detailRoot.commandId)
                 } else {
                     detailRoot.requestRun()
                 }
@@ -468,7 +632,7 @@ Item {
         defaultName: detailRoot.command.label || ""
         defaultExecutable: detailRoot.command.command || ""
         defaultArgsText: detailRoot.command.args ? detailRoot.command.args.join(" ") : ""
-        defaultWorkdir: projectService.activeProject.project_path || ""
+        defaultWorkdir: detailRoot.owningProject.project_path || ""
         defaultPort: (detailRoot.command.detectedPort || 0) > 0 ? detailRoot.command.detectedPort : 0
         onSaved: detailRoot.loadEffectiveConfig()
     }
@@ -541,50 +705,23 @@ Item {
 
                 Item { Layout.fillWidth: true }
 
-                Button {
+                UiButton {
                     Layout.preferredWidth: 110
-                    Layout.preferredHeight: 30
-                    font.pixelSize: 12
-
-                    background: Rectangle {
-                        radius: 6
-                        color: "transparent"
-                        border.color: Theme.border
-                        border.width: 1
-                    }
-
-                    contentItem: Label {
-                        text: qsTr("Cancel")
-                        color: Theme.textPrimary
-                        font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                    label: qsTr("Cancel")
+                    color: "secondary"
+                    variant: "outline"
+                    size: "sm"
                     onClicked: portBusyDialog.close()
                 }
 
-                Button {
+                UiButton {
                     Layout.preferredWidth: 110
-                    Layout.preferredHeight: 30
-                    font.pixelSize: 12
-
-                    background: Rectangle {
-                        radius: 6
-                        color: Theme.destructive
-                    }
-
-                    contentItem: Label {
-                        text: qsTr("Kill & Run")
-                        color: Theme.destructiveForeground
-                        font.pixelSize: 12
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                    label: qsTr("Kill & Run")
+                    color: "error"
+                    variant: "solid"
+                    size: "sm"
                     onClicked: {
-                        commandExecutor.killExternal(portBusyDialog.pid)
+                        detailRoot.exec.killExternal(portBusyDialog.pid)
                         portBusyDialog.close()
                         killRunTimer.start()
                     }
@@ -644,48 +781,21 @@ Item {
 
                 Item { Layout.fillWidth: true }
 
-                Button {
+                UiButton {
                     Layout.preferredWidth: 110
-                    Layout.preferredHeight: 30
-                    font.pixelSize: 12
-
-                    background: Rectangle {
-                        radius: 6
-                        color: "transparent"
-                        border.color: Theme.border
-                        border.width: 1
-                    }
-
-                    contentItem: Label {
-                        text: qsTr("Cancel")
-                        color: Theme.textPrimary
-                        font.pixelSize: 12
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                    label: qsTr("Cancel")
+                    color: "secondary"
+                    variant: "outline"
+                    size: "sm"
                     onClicked: depDialog.close()
                 }
 
-                Button {
+                UiButton {
                     Layout.preferredWidth: 110
-                    Layout.preferredHeight: 30
-                    font.pixelSize: 12
-
-                    background: Rectangle {
-                        radius: 6
-                        color: Theme.primary
-                    }
-
-                    contentItem: Label {
-                        text: qsTr("Run again")
-                        color: Theme.primaryForeground
-                        font.pixelSize: 12
-                        font.bold: true
-                        horizontalAlignment: Text.AlignHCenter
-                        verticalAlignment: Text.AlignVCenter
-                    }
-
+                    label: qsTr("Run again")
+                    color: "primary"
+                    variant: "solid"
+                    size: "sm"
                     onClicked: {
                         depDialog.close()
                         detailRoot.runEffective()
@@ -702,9 +812,9 @@ Item {
         anchors.bottom: parent.bottom
         anchors.bottomMargin: 8
         anchors.left: parent.left
-        anchors.leftMargin: 8
+        anchors.leftMargin: Theme.spacingLg
         anchors.right: parent.right
-        anchors.rightMargin: 8
+        anchors.rightMargin: Theme.spacingLg
         color: Theme.cardBackground
         border.color: Theme.border
         border.width: 1
@@ -729,26 +839,6 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
             }
 
-            // Git branch tag (mirrors sidebar UiTag)
-            UiTag {
-                id: branchTag
-                readonly property string folderPath: {
-                    var ap = projectService.activeProject;
-                    var af = projectService.activeFolder;
-                    var fp = (af && af.path) ? af.path : (ap && ap.project_path ? ap.project_path : "");
-                    return fp;
-                }
-                visible: Settings.showGitBranch
-                    && branchTag.folderPath !== ""
-                    && treeModel.gitBranchForPath(branchTag.folderPath) !== ""
-                label: treeModel.gitBranchForPath(branchTag.folderPath)
-                color: "primary"
-                variant: "subtle"
-                size: "sm"
-                iconSource: iconBaseUrl + "git-branch.png"
-                Layout.alignment: Qt.AlignVCenter
-            }
-
             UiInput {
                 id: searchField
                 Layout.fillWidth: true
@@ -761,17 +851,18 @@ Item {
             }
 
             UiSelectMenu {
-                id: timeBox
-                Layout.preferredWidth: 130
+                id: runBox
+                Layout.preferredWidth: 210
                 Layout.alignment: Qt.AlignVCenter
-                model: [qsTr("All time"), qsTr("5 min"), qsTr("10 min"), qsTr("30 min")]
-                currentIndex: 0
+                model: detailRoot.runEntries
                 searchable: false
-                chevronSource: iconBaseUrl + (Theme.isDark ? "chevron-down-dark.png" : "chevron-down.png")
-                checkIconSource: iconBaseUrl + (Theme.isDark ? "check-dark.png" : "check.png")
+                placeholderText: qsTr("No runs yet")
+                chevronSource: Theme.icon("chevron-down")
+                checkIconSource: Theme.icon("check")
                 onActivated: function(index) {
-                    detailRoot.sinceMin = detailRoot.timeValues[index]
-                    detailRoot.applyLogFilters()
+                    var entries = detailRoot.runEntries
+                    if (index >= 0 && index < entries.length)
+                        detailRoot.showRunSeq(entries[index].seq)
                 }
             }
 
@@ -789,26 +880,27 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
                 color: Theme.textMuted
                 font.pixelSize: 11
-                text: qsTr("Shown %1 of %2").arg(commandLog.shownCount).arg(commandLog.totalCount)
+                text: qsTr("Shown %1 of %2").arg(detailRoot.cmdLog.shownCount).arg(detailRoot.cmdLog.totalCount)
             }
 
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
-                iconSource: iconBaseUrl + (Theme.isDark ? "funnel-x-dark.png" : "funnel-x.png")
+                iconSource: Theme.icon("filter")
                 tooltipText: qsTr("Reset filters")
                 onClicked: detailRoot.resetLogFilters()
             }
 
             IconButton {
                 Layout.alignment: Qt.AlignVCenter
-                iconSource: iconBaseUrl + (Theme.isDark ? "brush-cleaning-dark.png" : "brush-cleaning.png")
+                iconSource: Theme.icon("clean")
                 tooltipText: "Clear console"
                 onClicked: detailRoot.clearRequested()
             }
         }
 
-        // Chips row (level/channel из потока) — второй строкой: в одну
-        // линию с шапкой не влезают, число чипсов растёт с потоком.
+        // Chips row (levels/channels observed in the stream) as a second
+        // line: they do not fit on the header line, and the chip count
+        // grows with the stream.
         Flow {
             id: chipsFlow
             anchors.top: detailConsoleHeader.bottom
@@ -820,30 +912,34 @@ Item {
             spacing: 6
 
                 Repeater {
-                    // totalCount в условии — зависимость биндинга: чипсы
-                    // перестраиваются, когда поток приносит новые значения.
-                    model: commandLog.totalCount >= 0 ? commandLog.observedLevels() : []
+                    id: levelsRepeater
+                    model: detailRoot.observedLevelsChips
                     Button {
-                        text: modelData
+                        id: levelBtn
+                        required property var modelData
+                        text: levelBtn.modelData
                         checkable: true
-                        checked: detailRoot.selLevels.indexOf(modelData) >= 0
+                        checked: detailRoot.selLevels.indexOf(levelBtn.modelData) >= 0
                         font.pixelSize: 11
                         onClicked: {
-                            detailRoot.selLevels = detailRoot.toggleSel(detailRoot.selLevels, modelData)
+                            detailRoot.selLevels = detailRoot.toggleSel(detailRoot.selLevels, levelBtn.modelData)
                             detailRoot.applyLogFilters()
                         }
                     }
                 }
 
                 Repeater {
-                    model: commandLog.totalCount >= 0 ? commandLog.observedChannels() : []
+                    id: channelsRepeater
+                    model: detailRoot.observedChannelsChips
                     Button {
-                        text: modelData
+                        id: channelBtn
+                        required property var modelData
+                        text: channelBtn.modelData
                         checkable: true
-                        checked: detailRoot.selChannels.indexOf(modelData) >= 0
+                        checked: detailRoot.selChannels.indexOf(channelBtn.modelData) >= 0
                         font.pixelSize: 11
                         onClicked: {
-                            detailRoot.selChannels = detailRoot.toggleSel(detailRoot.selChannels, modelData)
+                            detailRoot.selChannels = detailRoot.toggleSel(detailRoot.selChannels, channelBtn.modelData)
                             detailRoot.applyLogFilters()
                         }
                     }
@@ -859,10 +955,10 @@ Item {
             horizontalAlignment: Text.AlignHCenter
             color: Theme.textMuted
             font.pixelSize: 12
-            visible: commandLog.totalCount > 0 && commandLog.shownCount === 0
+            visible: detailRoot.cmdLog.totalCount > 0 && detailRoot.cmdLog.shownCount === 0
             text: qsTr("No matches — loosen the filters.")
-                + (commandLog.hiddenUnparsedCount > 0
-                    ? " " + qsTr("Hidden unparsed lines: %1.").arg(commandLog.hiddenUnparsedCount) : "")
+                + (detailRoot.cmdLog.hiddenUnparsedCount > 0
+                    ? " " + qsTr("Hidden unparsed lines: %1.").arg(detailRoot.cmdLog.hiddenUnparsedCount) : "")
         }
 
         // Log viewport: recessed surface (darker than the card, like a

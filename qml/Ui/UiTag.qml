@@ -1,6 +1,7 @@
 import QtQuick
 import QtQuick.Controls.Basic
 import QtQuick.Layouts
+import "../"
 
 pragma ComponentBehavior: Bound
 
@@ -49,7 +50,7 @@ Control {
     readonly property color tint: colorFor(root.color)
     readonly property color foreground: {
         if (variant === "solid")
-            return color === "neutral" ? Theme.textInverted : Theme.primaryForeground
+            return color === "neutral" ? Theme.textInverted : Theme.accentForeground
         return color === "neutral" ? Theme.textPrimary : tint
     }
     readonly property color fill: {

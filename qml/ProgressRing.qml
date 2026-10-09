@@ -7,7 +7,7 @@ Item {
     id: ring
 
     property real fraction: 0
-    property color ringColor: "#22c55e"
+    property color ringColor: Theme.success
     property string text: ""
 
     readonly property real clamped: Math.min(Math.max(fraction, 0), 0.999)

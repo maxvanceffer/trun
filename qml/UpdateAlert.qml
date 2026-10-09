@@ -1,4 +1,5 @@
 import QtQuick
+import "Ui"
 
 // Update capsule: a primary/subtle UiAlert with a single action.
 // messageText/actionText/iconSource/actionTriggered come from UiAlert;

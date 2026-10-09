@@ -55,6 +55,26 @@ McpServer::McpServer(ProjectService *projects, CommandExecutor *executor,
                      Settings *settings, QObject *parent)
     : QObject(parent), m_projects(projects), m_executor(executor), m_settings(settings)
 {
+    // Launches go through this executor: the headless --mcp mode never wires
+    // it into ProjectService (main.cpp does that for the GUI only), and both
+    // `run` paths end in ProjectService::runResolved.
+    m_projects->setExecutor(m_executor);
+    // Gating state of a run requested from MCP: emitted synchronously while
+    // runCommandEffective is on the stack, so a DIRECT connection keeps the
+    // flag usable in the same handleMessage call.
+    connect(m_projects, &ProjectService::runBlocked, this,
+            [this](const QString &commandId, const QStringList &missing) {
+                m_runBlocked = true;
+                m_blockedCommandId = commandId;
+                m_blockedMissing = missing;
+            },
+            Qt::DirectConnection);
+    // Bare command id + port found in the assembled console args.
+    connect(m_projects, &ProjectService::consoleDetectedPort, this,
+            [this](const QString &commandId, int port) {
+                m_consolePorts.insert(commandId, port);
+            },
+            Qt::DirectConnection);
     connect(m_executor, &CommandExecutor::started, this,
             [this](int, int pid, const QString &label, const QString &cmdline,
                    const QString &commandId) {
@@ -234,10 +254,11 @@ QJsonObject McpServer::callTool(const QJsonValue &id, const QString &name,
         const QJsonObject project = findProject(args.value(QStringLiteral("project")).toString());
         if (project.isEmpty())
             return toolResult(id, QStringLiteral("unknown project"), true);
+        const QString projectId = project.value(QStringLiteral("id")).toString();
         QJsonArray out;
         for (const QJsonValue &v : project.value(QStringLiteral("commands")).toArray()) {
             const QJsonObject c = v.toObject();
-            out << QJsonObject{
+            QJsonObject entry{
                 {QStringLiteral("id"), c.value(QStringLiteral("id")).toString()},
                 {QStringLiteral("label"), c.value(QStringLiteral("label")).toString()},
                 {QStringLiteral("command"), c.value(QStringLiteral("command")).toString()},
@@ -249,6 +270,15 @@ QJsonObject McpServer::callTool(const QJsonValue &id, const QString &name,
                              l << a.toString();
                          return l;
                      }())}};
+            // Console records additionally carry the argument specs and the
+            // saved values the next default run is assembled from; composer/
+            // npm records keep their flat args and stay as they were.
+            if (c.value(QStringLiteral("argsMeta")).isArray()) {
+                entry.insert(QStringLiteral("argsMeta"), c.value(QStringLiteral("argsMeta")));
+                entry.insert(QStringLiteral("currentValues"),
+                             savedArgValues(projectId, c.value(QStringLiteral("id")).toString()));
+            }
+            out << entry;
         }
         return toolResult(id, jsonText(out));
     }
@@ -265,13 +295,22 @@ QJsonObject McpServer::callTool(const QJsonValue &id, const QString &name,
         for (const QString &cmdId : m_executor->runningCommandIds()) {
             if (!key.isEmpty() && cmdId != key)
                 continue;
+            // Port sniffed from console output first, then the explicit
+            // `--port` of the assembled console args (reported per bare
+            // command id, so map a "projectId|commandId" run key back).
+            int port = m_runtimePorts.value(cmdId, 0);
+            if (port == 0) {
+                const int sep = cmdId.indexOf(u'|');
+                if (sep >= 0)
+                    port = m_consolePorts.value(cmdId.mid(sep + 1), 0);
+            }
             out << QJsonObject{
                 {QStringLiteral("commandId"), cmdId},
                 {QStringLiteral("pid"), m_executor->pidForCommand(cmdId)},
                 {QStringLiteral("memoryKb"), m_executor->memoryForCommand(cmdId)},
                 {QStringLiteral("cpuPercent"), m_executor->cpuForCommand(cmdId)},
                 {QStringLiteral("elapsedSec"), m_executor->elapsedForCommand(cmdId)},
-                {QStringLiteral("detectedPort"), m_runtimePorts.value(cmdId, 0)}};
+                {QStringLiteral("detectedPort"), port}};
         }
         return toolResult(id, jsonText(out));
     }
@@ -287,36 +326,59 @@ QJsonObject McpServer::callTool(const QJsonValue &id, const QString &name,
         const QString projectId = project.value(QStringLiteral("id")).toString();
         const QString commandId = cmd.value(QStringLiteral("id")).toString();
 
-        QString executable = cmd.value(QStringLiteral("command")).toString();
-        QStringList cmdArgs;
-        for (const QJsonValue &a : cmd.value(QStringLiteral("args")).toArray())
-            cmdArgs << a.toString();
-        QString workdir = project.value(QStringLiteral("project_path")).toString();
-        QString label = cmd.value(QStringLiteral("label")).toString();
-        QStringList env;
-        bool allowMultiple = false;
-        m_projects->resolveRunConfig(projectId, commandId, executable, cmdArgs, workdir, env,
-                                     allowMultiple);
-
-        if (args.contains(QStringLiteral("args"))) {
-            cmdArgs.clear();
-            for (const QJsonValue &a : args.value(QStringLiteral("args")).toArray())
+        // Explicit overrides keep the manual path: the caller hands over a
+        // full argv/workdir/env, so stored per-arg values do not apply.
+        if (args.contains(QStringLiteral("args")) || args.contains(QStringLiteral("workdir"))
+            || args.contains(QStringLiteral("env"))) {
+            QString executable = cmd.value(QStringLiteral("command")).toString();
+            QStringList cmdArgs;
+            for (const QJsonValue &a : cmd.value(QStringLiteral("args")).toArray())
                 cmdArgs << a.toString();
-        }
-        if (args.contains(QStringLiteral("workdir")))
-            workdir = args.value(QStringLiteral("workdir")).toString();
-        const QJsonObject envObj = args.value(QStringLiteral("env")).toObject();
-        for (auto it = envObj.begin(); it != envObj.end(); ++it)
-            env << it.key() + u'=' + it.value().toString();
+            QString workdir = project.value(QStringLiteral("project_path")).toString();
+            QString label = cmd.value(QStringLiteral("label")).toString();
+            QStringList env;
+            bool allowMultiple = false;
+            m_projects->resolveRunConfig(projectId, commandId, executable, cmdArgs, workdir, env,
+                                         allowMultiple);
 
-        const int runId = m_projects->runResolved(
-            projectId + u'|' + commandId, executable, cmdArgs, workdir,
-            label.isEmpty() ? executable : label, env, allowMultiple);
-        if (runId <= 0)
-            return toolResult(id, QStringLiteral("failed to start"), true);
-        return toolResult(id, QStringLiteral("started %1 (run #%2)")
-                                    .arg(commandId)
-                                    .arg(runId));
+            if (args.contains(QStringLiteral("args"))) {
+                cmdArgs.clear();
+                for (const QJsonValue &a : args.value(QStringLiteral("args")).toArray())
+                    cmdArgs << a.toString();
+            }
+            if (args.contains(QStringLiteral("workdir")))
+                workdir = args.value(QStringLiteral("workdir")).toString();
+            const QJsonObject envObj = args.value(QStringLiteral("env")).toObject();
+            for (auto it = envObj.begin(); it != envObj.end(); ++it)
+                env << it.key() + u'=' + it.value().toString();
+
+            const int runId = m_projects->runResolved(
+                projectId + u'|' + commandId, executable, cmdArgs, workdir,
+                label.isEmpty() ? executable : label, env, allowMultiple);
+            if (runId <= 0)
+                return toolResult(id, QStringLiteral("failed to start"), true);
+            return toolResult(id, QStringLiteral("started %1 (run #%2)")
+                                        .arg(commandId)
+                                        .arg(runId));
+        }
+
+        // Default path: stored run configuration decides everything — for
+        // console records ProjectService reassembles the args from runConfig
+        // argsValues and blocks the launch while a required positional is
+        // empty (runBlocked fires synchronously before anything starts).
+        m_runBlocked = false;
+        m_blockedCommandId.clear();
+        m_blockedMissing.clear();
+        if (m_projects->runCommandEffective(projectId, commandRef))
+            return toolResult(id, QStringLiteral("started %1 (run #%2)")
+                                      .arg(commandId)
+                                      .arg(++m_runSeq));
+        if (m_runBlocked && m_blockedCommandId == commandId)
+            return toolResult(id,
+                              QStringLiteral("blocked: missing required args: %1")
+                                  .arg(m_blockedMissing.join(QStringLiteral(", "))),
+                              true);
+        return toolResult(id, QStringLiteral("failed to start"), true);
     }
 
     if (name == QStringLiteral("stop")) {
@@ -419,7 +481,7 @@ QJsonObject McpServer::callTool(const QJsonValue &id, const QString &name,
                     const ParsedLogLine p = LogParser::parse(line);
                     observe(p, levels, channels);
                     if (!date.isEmpty()) {
-                        // Legacy prefix: текст первой [...] скобки сырой строки.
+                        // Legacy prefix: the text of the first [...] bracket of the raw line.
                         QString lineDate;
                         if (line.startsWith(u'[')) {
                             const int end = line.indexOf(u']');
@@ -574,7 +636,10 @@ QJsonArray McpServer::toolDefinitions() const
     };
     return QJsonArray{
         tool("list_projects", "List scanned projects", {}),
-        tool("list_commands", "List runnable commands of a project",
+        tool("list_commands",
+             "List runnable commands of a project. Commands defined with argument "
+             "specs also return argsMeta (positional/option definitions) and "
+             "currentValues (saved run values from runConfig, {} when none)",
              {{"project", str("Project id or path")}}, {"project"}),
         tool("status", "Running runs with pid, memory, cpu and uptime",
              {{"commandId", str("Optional filter: bare id or projectId|commandId")}}),
@@ -663,6 +728,21 @@ QJsonObject McpServer::findCommand(const QJsonObject &project, const QString &co
     return {};
 }
 
+QJsonObject McpServer::savedArgValues(const QString &projectId, const QString &commandId) const
+{
+    if (!m_settings)
+        return {};
+    // Same key ProjectService::resolveRunConfig reads for a default run;
+    // the stored config is one compact JSON object.
+    const QString raw =
+        m_settings->get(QStringLiteral("runConfig/%1/%2").arg(projectId, commandId)).toString();
+    if (raw.isEmpty())
+        return {};
+    const QJsonObject cfg = QJsonDocument::fromJson(raw.toUtf8()).object();
+    const QJsonValue values = cfg.value(QStringLiteral("argsValues"));
+    return values.isObject() ? values.toObject() : QJsonObject();
+}
+
 QString McpServer::resolveCommandKey(const QString &ref, const QStringList &known,
                                      bool &ambiguous) const
 {
@@ -716,7 +796,7 @@ QDateTime McpServer::parsedTimestamp(const ParsedLogLine &p)
     if (!dt.isValid())
         dt = QDateTime::fromString(p.layerTimestamp, Qt::ISODate);
     if (!dt.isValid() && !p.layerTimestamp.isEmpty()) {
-        // CLF "10/Oct/2000:13:55:36 -0700" (access-логи).
+        // CLF "10/Oct/2000:13:55:36 -0700" (access logs).
         static const QLocale c(QLocale::C);
         dt = c.toDateTime(p.layerTimestamp, QStringLiteral("dd/MMM/yyyy:HH:mm:ss t"));
     }

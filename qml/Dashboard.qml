@@ -2,9 +2,18 @@ import QtQuick
 import QtQuick.Controls 6.5
 import QtQuick.Layouts 1.5
 import "ToolPlugins.js" as ToolPlugins
+import "Ui"
+pragma ComponentBehavior: Bound
 
 Rectangle {
     id: dashboard
+    readonly property var sysStats: systemStats // qmllint disable unqualified
+    readonly property var upd: updater // qmllint disable unqualified
+    readonly property var projSvc: projectService // qmllint disable unqualified
+    readonly property var exec: commandExecutor // qmllint disable unqualified
+    readonly property var cmdLog: commandLog // qmllint disable unqualified
+    readonly property var tm: treeModel // qmllint disable unqualified
+    readonly property var settings: Settings // qmllint disable unqualified
     width: parent.width
     height: parent.height
     color: Theme.windowBackground
@@ -35,12 +44,12 @@ Rectangle {
     property string detailCommandId: ""
 
     // Host machine metrics (absent in tests that load this file standalone).
-    readonly property var stats: (typeof systemStats !== "undefined") ? systemStats : null
+    readonly property var stats: (typeof sysStats !== "undefined") ? sysStats : null
 
     // Updater presence (absent in tests that load this file standalone).
     readonly property bool hasUpdater: typeof updater !== "undefined"
-    readonly property bool hasUpdate: dashboard.hasUpdater && updater.updateAvailable
-    readonly property string updateVersion: dashboard.hasUpdater ? updater.latestVersion : ""
+    readonly property bool hasUpdate: dashboard.hasUpdater && upd.updateAvailable
+    readonly property string updateVersion: dashboard.hasUpdater ? upd.latestVersion : ""
 
     signal updateRequested()
 
@@ -86,8 +95,8 @@ Rectangle {
     }
 
     // Activity lists (recent persists across launches, running is live).
-    readonly property var recents: projectService.recentCommands
-    readonly property var running: projectService.runningCommands
+    readonly property var recents: projSvc.recentCommands
+    readonly property var running: projSvc.runningCommands
     readonly property bool hasRecents: recents !== undefined && recents !== null
                                         && recents.length > 0
     readonly property bool hasRunning: running !== undefined && running !== null
@@ -160,8 +169,65 @@ Rectangle {
         return i < 0 ? "" : p.slice(i + 1)
     }
 
-    function openActivity(projectId, commandId) {        if (projectId && projectId !== "")
-            projectService.selectProject(projectId)
+    // Framework console records (Symfony/Laravel discovery output): the
+    // categories that get the grouped bin/console section on folder pages.
+    // Categories arrive as stored ("Symfony") or bare ("symfony").
+    function isConsoleCategory(category) {
+        if (category === undefined || category === null)
+            return false
+        var c = category.toString().toLowerCase()
+        return c === "symfony" || c === "laravel"
+    }
+
+    function isConsoleRecord(cmd) {
+        return cmd !== undefined && cmd !== null && isConsoleCategory(cmd.category)
+    }
+
+    // Owning project id for a bare command id: the active project first,
+    // then every manifest project of the open folder (folder-page cards
+    // belong to projects that were never selected). "" when unknown.
+    function projectIdForCommand(bareId) {
+        if (!bareId)
+            return ""
+        var id = bareId.toString()
+        if (id.indexOf("|") >= 0)
+            return id.slice(0, id.lastIndexOf("|"))
+        var cmds = projSvc.activeProjectCommands
+        for (var i = 0; i < cmds.length; ++i) {
+            if (cmds[i] && cmds[i].id === id)
+                return projSvc.activeProject.id || ""
+        }
+        var folder = projSvc.activeFolderProjects
+        for (var f = 0; f < folder.length; ++f) {
+            var p = folder[f]
+            var list = (p && p.commands) || []
+            for (var j = 0; j < list.length; ++j) {
+                if (list[j] && list[j].id === id)
+                    return (p && p.id) ? p.id : ""
+            }
+        }
+        return ""
+    }
+
+    // A console run gated on missing required args ({commandId, label,
+    // missing:[]}). Set by the framework cards and the C++ runBlocked
+    // signal; the folder-page alert renders it until dismissed.
+    property var blockedRun: ({})
+
+    function reportRunBlocked(commandId, missing, label) {
+        var found = commandByKey(commandId)
+        blockedRun = { commandId: commandId || "",
+                       label: label || ((found.command && found.command.label) || commandId || ""),
+                       missing: missing || [] }
+    }
+
+    function clearRunBlocked() {
+        blockedRun = ({})
+    }
+
+    function openActivity(projectId, commandId) {
+        if (projectId && projectId !== "")
+            projSvc.selectProject(projectId)
         openDetail(commandId)
     }
 
@@ -198,7 +264,7 @@ Rectangle {
                 continue
             if (dashboard.isRunningCommand(item["projectId"] || pid, cid))
                 continue
-            projectService.runCommandEffective(pid, cid)
+            projSvc.runCommandEffective(pid, cid)
         }
     }
 
@@ -242,15 +308,15 @@ Rectangle {
         var sep = key.lastIndexOf("|")
         var pid = sep < 0 ? "" : key.slice(0, sep)
         var bare = key.slice(sep + 1)
-        var cmds = projectService.activeProjectCommands
+        var cmds = projSvc.activeProjectCommands
         for (var i = 0; i < cmds.length; ++i) {
             if (cmds[i] && cmds[i].id === bare
-                && (pid === "" || (projectService.activeProject.id || "") === pid))
+                && (pid === "" || (projSvc.activeProject.id || "") === pid))
                 return { command: cmds[i],
-                         manifest: (projectService.activeProject
-                                    && projectService.activeProject.manifest) || "" }
+                         manifest: (projSvc.activeProject
+                                    && projSvc.activeProject.manifest) || "" }
         }
-        var folder = projectService.activeFolderProjects
+        var folder = projSvc.activeFolderProjects
         for (var f = 0; f < folder.length; ++f) {
             var p = folder[f]
             if (!p || (pid !== "" && p.id !== pid))
@@ -334,7 +400,7 @@ Rectangle {
         var port = dashboard.resolveBusyPort(cmdId, line)
         if (port <= 0)
             return { status: "port" }
-        var occupant = commandExecutor.pidOnPort(port)
+        var occupant = exec.pidOnPort(port)
         if (occupant <= 0)
             return { status: "occupant", port: port }
         return { status: "ready", port: port, occupant: occupant }
@@ -380,7 +446,7 @@ Rectangle {
 
     signal addCustomRequested(string folderPath)
 
-    readonly property var activeProject: projectService.activeProject
+    readonly property var activeProject: projSvc.activeProject
     readonly property bool hasProject: activeProject !== undefined && activeProject !== null
                                        && activeProject.id !== undefined
                                        && activeProject.id !== ""
@@ -407,9 +473,9 @@ Rectangle {
     }
     readonly property string contextFolderPath: dashboard.activePage === "detail"
         ? dashboard.detailFolderPath
-        : ((projectService.activeFolder && projectService.activeFolder.path) || "")
+        : ((projSvc.activeFolder && projSvc.activeFolder.path) || "")
     readonly property var folderSegments: dashboard.contextFolderPath !== ""
-        ? projectService.folderCrumbs(dashboard.contextFolderPath) : []
+        ? projSvc.folderCrumbs(dashboard.contextFolderPath) : []
     readonly property bool showFolderCrumbs: dashboard.folderSegments.length > 0
         && (activePage === "folder" || activePage === "detail")
 
@@ -421,12 +487,15 @@ Rectangle {
     function openFolder(folderPath) {
         dashboard.closeDetail()
         if (folderPath !== undefined && folderPath !== "")
-            projectService.selectFolder(folderPath)
+            projSvc.selectFolder(folderPath)
         dashboard.activePage = "folder"
     }
 
     function openDatabases() {
         dashboard.closeDetail()
+        // The sidebar entry navigates to the list level, so re-entering from
+        // a detail view must drop the current service selection.
+        databasesPage.selectedIndex = -1
         dashboard.activePage = "databases"
     }
 
@@ -435,8 +504,13 @@ Rectangle {
         dashboard.activePage = "docker"
     }
 
+    function openApi() {
+        dashboard.closeDetail()
+        dashboard.activePage = "api"
+    }
+
     Connections {
-        target: projectService
+        target: dashboard.projSvc
         function onActiveProjectChanged() {
             if (!dashboard.hasProject)
                 dashboard.activePage = "dashboard"
@@ -448,7 +522,7 @@ Rectangle {
     function fullKey(cmdId) {
         if (cmdId === "") return ""
         if (cmdId.indexOf("|") >= 0) return cmdId
-        return (projectService.activeProject.id || "") + "|" + cmdId
+        return (projSvc.activeProject.id || "") + "|" + cmdId
     }
 
     // Controls inside the agent title-bar strip that must stay clickable.
@@ -464,6 +538,12 @@ Rectangle {
         }
         if (crumbManifestLabel && crumbManifestLabel.visible)
             controls.push(crumbManifestLabel)
+        // Marked unconditionally: this function only runs when the window
+        // appears / the theme changes, by which time activePage is not
+        // necessarily "databases", so a visible-guard would never mark the
+        // crumb in time.
+        if (crumbDatabasesLabel)
+            controls.push(crumbDatabasesLabel)
         for (var j = 0; j < controls.length; ++j) {
             if (controls[j])
                 agent.setHitTestVisible(controls[j], true)
@@ -472,13 +552,152 @@ Rectangle {
         }
     }
 
-    function appendCommandLine(cmdId, level, target, message) {
-        cmdId = fullKey(cmdId)
+    // Run history per full run key: [{seq, startedAt, exitCode}] with
+    // exitCode null/undefined while the run is live. The console shows
+    // one run segment at a time; runSelection maps a key to the visible
+    // seq (the latest one by default).
+    property var commandRuns: ({})
+    property var runSelection: ({})
+
+    function runsFor(cmdId) {
+        return commandRuns[fullKey(cmdId)] || []
+    }
+
+    function latestRunSeq(cmdId) {
+        var runs = runsFor(cmdId)
+        return runs.length > 0 ? runs[runs.length - 1].seq : 0
+    }
+
+    function selectedRunSeq(cmdId) {
+        var key = fullKey(cmdId)
+        if (key === "") return 0
+        var sel = runSelection[key]
+        return sel === undefined ? latestRunSeq(key) : sel
+    }
+
+    function runStartMs(cmdId, seq) {
+        var key = fullKey(cmdId)
+        var runs = commandRuns[key] || []
+        for (var i = 0; i < runs.length; ++i) {
+            if (runs[i].seq === seq)
+                return runs[i].startedAt
+        }
+        // No segment yet (pre-run lines only): anchor to the first of
+        // them so the gutter counts from visible output, not the epoch.
+        var h = commandHistories[key] || []
+        for (var j = 0; j < h.length; ++j) {
+            if (h[j].run === seq || h[j].run === 0)
+                return h[j].at
+        }
+        return Date.now()
+    }
+
+    // Selector entry: "#1 · 13:31:50 · exit 0" (or "· running" live).
+    function runLabel(run) {
+        var t = new Date(run.startedAt)
+        function pad(n) { return ("0" + n).slice(-2) }
+        var state = (run.exitCode === null || run.exitCode === undefined)
+            ? qsTr("running") : qsTr("exit %1").arg(run.exitCode)
+        return "#" + run.seq + " · " + pad(t.getHours()) + ":"
+            + pad(t.getMinutes()) + ":" + pad(t.getSeconds()) + " · " + state
+    }
+
+    function runMenu(cmdId) {
+        var out = []
+        var runs = runsFor(cmdId)
+        for (var i = 0; i < runs.length; ++i)
+            out.push({ seq: runs[i].seq, label: runLabel(runs[i]) })
+        return out
+    }
+
+    // Lines of one run segment (plus pre-run system lines, run 0, which
+    // belong to no segment but must not vanish from any view).
+    function runSlice(key, seq) {
+        var out = []
+        var h = commandHistories[key] || []
+        for (var i = 0; i < h.length; ++i) {
+            if (h[i].run === seq || h[i].run === 0)
+                out.push(h[i])
+        }
+        return out
+    }
+
+    // Switches the console to one run segment (the run selector).
+    function showRun(cmdId, seq) {
+        var key = fullKey(cmdId)
+        if (key === "") return
+        var sel = runSelection
+        sel[key] = seq
+        runSelection = sel
+        refillRun(key, seq)
+    }
+
+    // Refills the visible console with one segment. Only the selected
+    // command has anything on screen: background runs just grow history.
+    function refillRun(key, seq) {
+        if (key === "") return
+        selectedCommandId = key
+        cmdLog.clear()
+        // One C++ call: addBatch. Re-filling row by row (add() per line)
+        // fires N signal storms and makes DetailPage re-render its RichText
+        // console N times — a UI freeze on open for long histories.
+        cmdLog.addBatch(runSlice(key, seq))
+    }
+
+    // A launch observed from the executor: opens a new run segment, echoes
+    // the full command line, and switches the console to it.
+    function startRun(cmdId, label, cmdline) {
+        var key = fullKey(cmdId)
+        var runs = runsFor(key).slice()
+        var seq = runs.length > 0 ? runs[runs.length - 1].seq + 1 : 1
+        runs.push({ seq: seq, startedAt: Date.now(), exitCode: null })
+        var all = commandRuns
+        all[key] = runs
+        commandRuns = all
+        var sel = runSelection
+        sel[key] = seq
+        runSelection = sel
+        if (key !== "" && key === selectedCommandId)
+            refillRun(key, seq)
+        appendRunLine(key, "system", label, cmdline, seq, "echo")
+    }
+
+    // A finished launch closes its open segment. Clean exits live on in
+    // the run selector ("#N · time · exit M"); only abnormal ends
+    // (a tailLine) stay visible as a line.
+    function finishRun(cmdId, label, exitCode, tailLine) {
+        var key = fullKey(cmdId)
+        var runs = runsFor(key).slice()
+        var seq = 0
+        for (var i = runs.length - 1; i >= 0; --i) {
+            if (runs[i].exitCode === null || runs[i].exitCode === undefined) {
+                runs[i].exitCode = exitCode
+                seq = runs[i].seq
+                var all = commandRuns
+                all[key] = runs
+                commandRuns = all
+                break
+            }
+        }
+        if (seq === 0)
+            seq = latestRunSeq(key)
+        if (tailLine !== undefined && tailLine !== "")
+            appendRunLine(key, "system", label, tailLine, seq, "")
+    }
+
+    function appendCommandLine(cmdId, level, target, message, kind) {
+        var key = fullKey(cmdId)
+        appendRunLine(key, level, target, message, latestRunSeq(key), kind || "")
+    }
+
+    function appendRunLine(cmdId, level, target, message, run, kind) {
+        var key = fullKey(cmdId)
+        var at = Date.now()
         var histories = commandHistories
-        var h = histories[cmdId] || []
-        h.push({level: level, target: target, message: message})
+        var h = histories[key] || []
+        h.push({level: level, target: target, message: message, at: at, run: run, kind: kind || ""})
         while (h.length > 1000) h.shift()
-        histories[cmdId] = h
+        histories[key] = h
         commandHistories = histories
         // Sniff the port frameworks print at startup ("Local:
         // http://localhost:5173/", "Listening on ...", "listening on
@@ -488,27 +707,27 @@ Rectangle {
             ToolPlugins.stripSgr(message))
         if (port > 0) {
             var ports = detectedPorts
-            ports[cmdId] = port
+            ports[key] = port
             detectedPorts = ports
             // A busy-port report may have arrived before the port was known
-            if (pendingBusy[cmdId] !== undefined)
-                dashboard.tryKillRun(cmdId, message)
+            if (pendingBusy[key] !== undefined)
+                dashboard.tryKillRun(key, message)
         }
-        if (cmdId !== "" && cmdId === selectedCommandId)
-            commandLog.add(level, target, message)
+        // Live lines reach the console only for the selected segment: a
+        // newer run auto-switches via startRun, an older viewed segment
+        // stays put while history keeps growing underneath.
+        if (key !== "" && key === selectedCommandId && run === selectedRunSeq(key))
+            cmdLog.add(level, target, message, at, kind || "")
     }
 
     function selectCommand(cmdId) {
         if (cmdId === "") {
             selectedCommandId = ""
-            commandLog.clear()
+            cmdLog.clear()
             return
         }
-        selectedCommandId = fullKey(cmdId)
-        commandLog.clear()
-        var h = commandHistories[selectedCommandId] || []
-        for (var i = 0; i < h.length; ++i)
-            commandLog.add(h[i].level, h[i].target, h[i].message)
+        // The latest run segment (or everything when nothing ran yet).
+        showRun(cmdId, latestRunSeq(cmdId))
     }
 
     function clearSelectedCommand() {
@@ -516,7 +735,13 @@ Rectangle {
         var histories = commandHistories
         delete histories[selectedCommandId]
         commandHistories = histories
-        commandLog.clear()
+        var runs = commandRuns
+        delete runs[selectedCommandId]
+        commandRuns = runs
+        var sel = runSelection
+        delete sel[selectedCommandId]
+        runSelection = sel
+        cmdLog.clear()
     }
 
     function openDetail(cmdId) {
@@ -535,10 +760,10 @@ Rectangle {
 
     // Auto-select the first command when the project (and its commands) change
     Connections {
-        target: projectService
+        target: dashboard.projSvc
 
         function onActiveProjectCommandsChanged() {
-            var cmds = projectService.activeProjectCommands
+            var cmds = dashboard.projSvc.activeProjectCommands
             for (var i = 0; i < cmds.length; ++i) {
                 if (dashboard.fullKey(cmds[i].id) === dashboard.selectedCommandId) return
             }
@@ -546,11 +771,34 @@ Rectangle {
         }
     }
 
+    // Console run gating + explicit ports (ProjectService signals): the
+    // folder-page framework section depends on both.
     Connections {
-        target: commandExecutor
+        target: dashboard.projSvc
+
+        // A run gated on required args never started: surface the names.
+        function onRunBlocked(commandId, missing) {
+            dashboard.reportRunBlocked(commandId, missing)
+        }
+
+        // Explicit `--port <v>` in the launched args of a console run:
+        // merged under the same run key as the sniffed ports, so cards
+        // and the detail page read one map.
+        function onConsoleDetectedPort(commandId, port) {
+            var pid = dashboard.projectIdForCommand(commandId)
+            if (pid === "" || !commandId)
+                return
+            var ports = dashboard.detectedPorts
+            ports[pid + "|" + commandId] = port
+            dashboard.detectedPorts = ports
+        }
+    }
+
+    Connections {
+        target: dashboard.exec
 
         function onStarted(id, pid, label, cmdline, commandId) {
-            dashboard.appendCommandLine(commandId || label, "system", label, "▶ " + cmdline + " (PID " + pid + ")")
+            dashboard.startRun(commandId || label, label, cmdline)
             var pr = dashboard.pendingRefused
             delete pr[dashboard.fullKey(commandId || label)]
             dashboard.pendingRefused = pr
@@ -563,8 +811,10 @@ Rectangle {
         }
 
         function onFinished(id, label, exitCode, commandId) {
-            var text = exitCode < 0 ? "■ stopped" : "■ done, exit code " + exitCode
-            dashboard.appendCommandLine(commandId || label, "system", label, text)
+            // Killed runs keep a visible "■ stopped" line; clean exits
+            // live on in the run selector ("#N · time · exit M").
+            dashboard.finishRun(commandId || label, label, exitCode,
+                                exitCode < 0 ? "■ stopped" : "")
             // Failed after ECONNREFUSED: dialog from the log line alone,
             // text hint when off the command page.
             var key = dashboard.fullKey(commandId || label)
@@ -580,7 +830,7 @@ Rectangle {
         }
 
         function onFailed(id, label, error, commandId) {
-            dashboard.appendCommandLine(commandId || label, "error", label, "■ failed: " + error)
+            dashboard.finishRun(commandId || label, label, -1, "■ failed: " + error)
         }
     }
 
@@ -630,10 +880,38 @@ Rectangle {
                 }
 
                 Label {
+                    id: crumbDatabasesLabel
                     visible: dashboard.activePage === "databases"
                     text: qsTr("Databases")
+                    color: dashboard.activePage === "databases" && databasesPage.selectedService !== null
+                        ? Theme.textMuted : Theme.textPrimary
+                    font.pixelSize: Theme.fontSizeLg
+
+                    MouseArea {
+                        anchors.fill: parent
+                        visible: databasesPage.selectedService !== null
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: databasesPage.selectedIndex = -1
+                    }
+                }
+
+                // Selected-service crumb: DatabasesPage's own list/detail nav
+                // is one level deeper than `activePage`, so it gets its own
+                // conditional segment here rather than a duplicate in-page
+                // breadcrumb (matches how the folder/detail trail below works).
+                Label {
+                    visible: dashboard.activePage === "databases" && databasesPage.selectedService !== null
+                    text: "/"
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSizeLg
+                }
+
+                Label {
+                    visible: dashboard.activePage === "databases" && databasesPage.selectedService !== null
+                    text: databasesPage.selectedService ? databasesPage.titleText(databasesPage.selectedService) : ""
                     color: Theme.textPrimary
                     font.pixelSize: Theme.fontSizeLg
+                    elide: Text.ElideRight
                 }
 
                 Label {
@@ -650,6 +928,20 @@ Rectangle {
                     font.pixelSize: Theme.fontSizeLg
                 }
 
+                Label {
+                    visible: dashboard.activePage === "api"
+                    text: "/"
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSizeLg
+                }
+
+                Label {
+                    visible: dashboard.activePage === "api"
+                    text: qsTr("API")
+                    color: Theme.textPrimary
+                    font.pixelSize: Theme.fontSizeLg
+                }
+
                 // Folder crumbs (folder page and detail alike). Segments
                 // navigate back to their folder; the manifest/command tail
                 // on detail pages names the current location.
@@ -658,6 +950,7 @@ Rectangle {
                     model: dashboard.showFolderCrumbs ? dashboard.folderSegments : []
 
                     delegate: RowLayout {
+                        id: crumbDelegate
                         required property var modelData
                         required property int index
                         spacing: Theme.spacingXs
@@ -669,7 +962,7 @@ Rectangle {
                         }
 
                         Label {
-                            text: modelData.name || ""
+                            text: crumbDelegate.modelData.name || ""
                             color: Theme.textMuted
                             font.pixelSize: Theme.fontSizeLg
                             elide: Text.ElideRight
@@ -677,8 +970,26 @@ Rectangle {
                             MouseArea {
                                 anchors.fill: parent
                                 cursorShape: Qt.PointingHandCursor
-                                onClicked: dashboard.openFolder(modelData.path || "")
+                                onClicked: dashboard.openFolder(crumbDelegate.modelData.path || "")
                             }
+                        }
+
+                        // Per-folder git branch tag, shown next to each folder crumb.
+                        // Reads gitBranchesVersion so it refreshes when any cached
+                        // branch changes (a plain function call has no change
+                        // tracking of its own).
+                        UiTag {
+                            readonly property string branchName: {
+                                tm.gitBranchesVersion
+                                return tm.gitBranchForPath(crumbDelegate.modelData.path || "")
+                            }
+                            visible: settings.showGitBranch && branchName !== ""
+                            label: branchName
+                            color: "primary"
+                            variant: "subtle"
+                            size: "sm"
+                            iconSource: Theme.icon("git-branch")
+                            Layout.alignment: Qt.AlignVCenter
                         }
                     }
                 }
@@ -811,7 +1122,7 @@ Rectangle {
                 anchors.fill: parent
                 messageText: qsTr("Update to v%1 available").arg(dashboard.updateVersion)
                 actionText: qsTr("Update")
-                iconSource: iconBaseUrl + (Theme.isDark ? "rotate-cw-dark.png" : "rotate-cw.png")
+                iconSource: Theme.icon("refresh")
                 onActionTriggered: dashboard.updateRequested()
             }
         }
@@ -862,13 +1173,14 @@ Rectangle {
                         IconButton {
                             objectName: "runAllRecentButton"
                             Layout.alignment: Qt.AlignVCenter
-                            iconSource: iconBaseUrl + (Theme.isDark ? "run-all-dark.png" : "run-all.png")
+                            iconSource: Theme.icon("run-all")
                             tooltipText: qsTr("Run all commands")
                             onClicked: dashboard.runAllRecent()
                         }
                     }
 
-                    Row {
+                    Flow {
+                        width: parent.width
                         spacing: Theme.spacingSm
 
                         Repeater {
@@ -909,8 +1221,8 @@ Rectangle {
                                                 * ToolPlugins.manifestAspect(recentCard.manifest))
                                             Layout.preferredHeight: recentCard.manifest === "composer.json" ? 24 : 11
                                             Layout.alignment: Qt.AlignVCenter
-                                            source: iconBaseUrl + ToolPlugins.manifestIcon(
-                                                recentCard.manifest, Theme.isDark)
+                                            source: Theme.icon(ToolPlugins.manifestIcon(
+                                                recentCard.manifest))
                                             fillMode: Image.PreserveAspectFit
                                             smooth: true
                                         }
@@ -952,7 +1264,7 @@ Rectangle {
                                     height: 8
                                     radius: 4
                                     z: 2
-                                    color: "#22c55e"
+                                    color: Theme.success
                                     visible: dashboard.isRunningCommand(
                                         recentCard.modelData.projectId,
                                         recentCard.modelData.commandId)
@@ -994,10 +1306,10 @@ Rectangle {
                         spacing: Theme.spacingSm
                         Rectangle {
                             Layout.alignment: Qt.AlignVCenter
-                            width: 8
-                            height: 8
+                            Layout.preferredWidth: 8
+                            Layout.preferredHeight: 8
                             radius: 4
-                            color: "#22c55e"
+                            color: Theme.success
                         }
                         Label {
                             Layout.alignment: Qt.AlignVCenter
@@ -1013,17 +1325,18 @@ Rectangle {
                         }
                         IconButton {
                             Layout.alignment: Qt.AlignVCenter
-                            iconSource: iconBaseUrl + (Theme.isDark ? "stop-all-dark.png" : "stop-all.png")
+                            iconSource: Theme.icon("stop-all")
                             tooltipText: qsTr("Stop all commands")
-                            onClicked: commandExecutor.killAll()
+                            onClicked: dashboard.exec.killAll()
                         }
                     }
 
-                    Row {
+                    Flow {
+                        width: parent.width
                         spacing: Theme.spacingSm
 
                         Repeater {
-                            model: projectService.runningCommands
+                            model: dashboard.projSvc.runningCommands
 
                             delegate: Rectangle {
                                 id: runningCard
@@ -1075,8 +1388,8 @@ Rectangle {
                                                 * ToolPlugins.manifestAspect(runningCard.manifest))
                                             Layout.preferredHeight: runningCard.manifest === "composer.json" ? 24 : 11
                                             Layout.alignment: Qt.AlignVCenter
-                                            source: iconBaseUrl + ToolPlugins.manifestIcon(
-                                                runningCard.manifest, Theme.isDark)
+                                            source: Theme.icon(ToolPlugins.manifestIcon(
+                                                runningCard.manifest))
                                             fillMode: Image.PreserveAspectFit
                                             smooth: true
                                         }
@@ -1097,9 +1410,9 @@ Rectangle {
                                             implicitWidth: 20
                                             implicitHeight: 20
                                             padding: 2
-                                            iconSource: iconBaseUrl + (Theme.isDark ? "square-menu-dark.png" : "square-menu.png")
+                                            iconSource: Theme.icon("stop")
                                             tooltipText: qsTr("Stop")
-                                            onClicked: commandExecutor.stopCommand(
+                                            onClicked: dashboard.exec.stopCommand(
                                                 runningCard.modelData.projectId + "|" + runningCard.modelData.commandId)
                                         }
                                     }
@@ -1115,7 +1428,7 @@ Rectangle {
                                     Label {
                                         width: parent.width
                                         text: dashboard.elapsedText(runningCard.modelData.startedAt)
-                                        color: "#22c55e"
+                                        color: Theme.success
                                         font.pixelSize: Theme.fontSizeSm
                                     }
                                 }
@@ -1166,19 +1479,19 @@ Rectangle {
                 Behavior on opacity { NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard } }
                 Behavior on x { NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard } }
 
-                readonly property string folderPath: (projectService.activeFolder
-                    && projectService.activeFolder.path) || ""
+                readonly property string folderPath: (dashboard.projSvc.activeFolder
+                    && dashboard.projSvc.activeFolder.path) || ""
                 // Current branch of the folder; tracks the model's
                 // refresh counter since plain calls have no tracking.
                 readonly property string folderBranch: {
-                    treeModel.gitBranchesVersion
+                    dashboard.tm.gitBranchesVersion
                     return folderPage.folderPath !== ""
-                        ? treeModel.gitBranchForPath(folderPage.folderPath) : ""
+                        ? dashboard.tm.gitBranchForPath(folderPage.folderPath) : ""
                 }
                 // Manifest projects, excluding the custom-commands pseudo-project
                 readonly property var manifestSections: {
                     var out = []
-                    var list = projectService.activeFolderProjects
+                    var list = dashboard.projSvc.activeFolderProjects
                     for (var i = 0; i < list.length; ++i) {
                         if (list[i] && list[i].manifest !== "custom")
                             out.push(list[i])
@@ -1186,7 +1499,7 @@ Rectangle {
                     return out
                 }
                 readonly property var customSection: {
-                    var list = projectService.activeFolderProjects
+                    var list = dashboard.projSvc.activeFolderProjects
                     for (var i = 0; i < list.length; ++i) {
                         if (list[i] && list[i].manifest === "custom")
                             return list[i]
@@ -1195,6 +1508,16 @@ Rectangle {
                 }
                 readonly property var customCommands: folderPage.customSection
                     ? (folderPage.customSection.commands || []) : []
+
+                // Console discovery finishes with projectsChanged only (no
+                // folder signal), and activeFolderProjects is a snapshot:
+                // a fresh stamp re-reads the live project list, which the
+                // projects() getter serves current. Drives the console
+                // section's loading -> filled transition.
+                readonly property var projectsStamp: {
+                    var _ = dashboard.projSvc.projectCount // NOTIFY projectsChanged
+                    return { at: Date.now() }
+                }
 
                 ScrollView {
                     id: folderScroll
@@ -1214,9 +1537,34 @@ Rectangle {
                             model: folderPage.manifestSections
 
                             delegate: ColumnLayout {
+                                id: sectionDelegate
                                 required property var modelData
                                 property string sectionId: modelData.id || ""
-                                property var sectionCommands: modelData.commands || []
+                                // Manifest commands for the generic card grid:
+                                // framework console records get their own
+                                // grouped section below, never generic cards.
+                                property var sectionCommands: {
+                                    var all = modelData.commands || []
+                                    var out = []
+                                    for (var i = 0; i < all.length; ++i) {
+                                        if (all[i] && dashboard.isConsoleRecord(all[i]))
+                                            continue
+                                        out.push(all[i])
+                                    }
+                                    return out
+                                }
+                                // Console records present, or discovery still
+                                // running (header shows "loading…" meanwhile).
+                                property bool hasConsole: {
+                                    if (modelData.consoleLoading === true)
+                                        return true
+                                    var all = modelData.commands || []
+                                    for (var i = 0; i < all.length; ++i) {
+                                        if (all[i] && dashboard.isConsoleRecord(all[i]))
+                                            return true
+                                    }
+                                    return false
+                                }
                                 spacing: Theme.spacingSm
                                 Layout.fillWidth: true
                                 // Inner padding: hover glow rings stick out 3px,
@@ -1234,19 +1582,19 @@ Rectangle {
                                         // the icon runs slightly above and below
                                         // the text, which stays centered in it.
                                         Layout.preferredWidth: Math.round(
-                                            ToolPlugins.manifestHeaderHeight(modelData.manifest || "")
-                                            * ToolPlugins.manifestAspect(modelData.manifest || ""))
+                                            ToolPlugins.manifestHeaderHeight(sectionDelegate.modelData.manifest || "")
+                                            * ToolPlugins.manifestAspect(sectionDelegate.modelData.manifest || ""))
                                         Layout.preferredHeight: ToolPlugins.manifestHeaderHeight(
-                                            modelData.manifest || "")
+                                            sectionDelegate.modelData.manifest || "")
                                         Layout.alignment: Qt.AlignVCenter
-                                        source: iconBaseUrl + ToolPlugins.manifestIcon(
-                                            modelData.manifest || "", Theme.isDark)
+                                        source: Theme.icon(ToolPlugins.manifestIcon(
+                                            sectionDelegate.modelData.manifest || ""))
                                         fillMode: Image.PreserveAspectFit
                                         smooth: true
                                     }
 
                                     Label {
-                                        text: modelData.name || modelData.manifest || ""
+                                        text: sectionDelegate.modelData.name || sectionDelegate.modelData.manifest || ""
                                         color: Theme.textPrimary
                                         font.pixelSize: Theme.fontSizeMd
                                         font.bold: true
@@ -1265,7 +1613,7 @@ Rectangle {
                                     }
 
                                     Label {
-                                        text: String(sectionCommands.length)
+                                        text: String(sectionDelegate.sectionCommands.length)
                                         color: Theme.textMuted
                                         font.pixelSize: Theme.fontSizeSm
                                         Layout.alignment: Qt.AlignVCenter
@@ -1282,14 +1630,400 @@ Rectangle {
                                     uniformCellHeights: true
 
                                     Repeater {
-                                        model: sectionCommands
+                                        model: sectionDelegate.sectionCommands
 
                                         delegate: CommandCard {
                                             required property var modelData
                                             Layout.fillWidth: true
-                                            projectId: sectionId
+                                            projectId: sectionDelegate.sectionId
                                             command: modelData
                                         }
+                                    }
+                                }
+
+                                // Framework console section (Symfony/Laravel):
+                                // right below its own manifest cards, grouped by
+                                // namespace. Live project data — the folder
+                                // snapshot misses a discovery that finishes later.
+                                ColumnLayout {
+                                    id: consoleSection
+                                    visible: sectionDelegate.hasConsole
+                                             || consoleSection.loading
+                                             || consoleSection.consoleCommands.length > 0
+                                    Layout.fillWidth: true
+                                    // Top margin up to the between-section gap:
+                                    // delegate spacing (spacingSm) + this (spacingLg)
+                                    // = spacingXl, matching the parent ColumnLayout.
+                                    Layout.topMargin: Theme.spacingLg
+                                    spacing: Theme.spacingSm
+
+                                    readonly property var liveProject: {
+                                        folderPage.projectsStamp
+                                        var wanted = sectionDelegate.sectionId
+                                        var all = dashboard.projSvc.projects()
+                                        for (var i = 0; i < all.length; ++i) {
+                                            if (all[i] && all[i].id === wanted)
+                                                return all[i]
+                                        }
+                                        return sectionDelegate.modelData
+                                    }
+                                    readonly property bool loading:
+                                        liveProject.consoleLoading === true
+                                    readonly property var cache:
+                                        liveProject.consoleCache || ({})
+                                    // Records discovery produced; hidden ones
+                                    // are never shown.
+                                    readonly property var consoleCommands: {
+                                        var all = liveProject.commands || []
+                                        var out = []
+                                        for (var i = 0; i < all.length; ++i) {
+                                            var c = all[i]
+                                            if (!c || !dashboard.isConsoleRecord(c)
+                                                    || c.hidden === true)
+                                                continue
+                                            out.push(c)
+                                        }
+                                        return out
+                                    }
+                                    readonly property string framework: {
+                                        var fw = cache.framework
+                                        if (fw !== undefined && fw !== null
+                                                && fw.toString() !== "")
+                                            return fw.toString()
+                                        var c = consoleCommands[0]
+                                        return (c && c.category) ? c.category.toString() : ""
+                                    }
+                                    readonly property string frameworkName:
+                                        framework === "" ? ""
+                                        : framework.charAt(0).toUpperCase()
+                                          + framework.slice(1).toLowerCase()
+                                    readonly property string version:
+                                        (cache.version !== undefined && cache.version !== null)
+                                        ? cache.version.toString() : ""
+                                    // env default, data-driven: the `env` option of
+                                    // the first record that declares one; "—" when
+                                    // it carries no default.
+                                    readonly property string envDefault: {
+                                        var cmds = consoleCommands
+                                        for (var i = 0; i < cmds.length; ++i) {
+                                            var meta = cmds[i].argsMeta || []
+                                            for (var j = 0; j < meta.length; ++j) {
+                                                var m = meta[j]
+                                                if (!m || m.kind !== "option")
+                                                    continue
+                                                var n = (m.name || "").toString()
+                                                if (n !== "env" && n !== "--env")
+                                                    continue
+                                                if (m.default !== undefined && m.default !== null
+                                                        && m.default.toString() !== "")
+                                                    return m.default.toString()
+                                                return "—"
+                                            }
+                                        }
+                                        return "—"
+                                    }
+                                    // No env in the header — it lives in the drawer's
+                                    // --env field (envDefault still feeds it).
+                                    readonly property string headerText:
+                                        frameworkName !== ""
+                                            ? qsTr("%1 console").arg(frameworkName)
+                                            : (liveProject.name || "")
+                                    // Meta tail of the header: "bin/console ·
+                                    // Symfony 7.1 · env dev" — binary from the
+                                    // first record, framework + version and the
+                                    // default --env.
+                                    readonly property string metaText: {
+                                        var parts = []
+                                        var binary = consoleCommands.length > 0
+                                            ? (consoleCommands[0].command || "").toString() : ""
+                                        if (binary !== "")
+                                            parts.push(binary)
+                                        if (frameworkName !== "")
+                                            parts.push(frameworkName
+                                                       + (version !== "" ? " " + version : ""))
+                                        if (envDefault !== "—")
+                                            parts.push(qsTr("env") + " " + envDefault)
+                                        return parts.join(" · ")
+                                    }
+                                    // Records discovery produced but marked hidden
+                                    // (framework-namespace commands folded away).
+                                    readonly property int hiddenCount: {
+                                        var all = liveProject.commands || []
+                                        var n = 0
+                                        for (var i = 0; i < all.length; ++i) {
+                                            var c = all[i]
+                                            if (c && dashboard.isConsoleRecord(c)
+                                                    && c.hidden === true)
+                                                n++
+                                        }
+                                        return n
+                                    }
+                                    readonly property string countText: loading
+                                        ? qsTr("loading…")
+                                        : (hiddenCount > 0
+                                           ? qsTr("%1 · +%2 framework").arg(visibleCommands.length).arg(hiddenCount)
+                                           : qsTr("%1 commands").arg(visibleCommands.length))
+                                    // Name filter (case-insensitive substring
+                                    // of the label) plus namespace toggles:
+                                    // "All" + every distinct label prefix up to
+                                    // the first colon (app, messenger, …).
+                                    property string filterText: ""
+                                    property var userNs: undefined
+                                    readonly property var namespaces: {
+                                        var seen = []
+                                        var out = []
+                                        for (var i = 0; i < consoleCommands.length; ++i) {
+                                            var name = (consoleCommands[i].label || "").toString()
+                                            var colon = name.indexOf(":")
+                                            if (colon < 0)
+                                                continue
+                                            var ns = name.slice(0, colon)
+                                            if (seen.indexOf(ns) < 0) {
+                                                seen.push(ns)
+                                                out.push(ns)
+                                            }
+                                        }
+                                        return out
+                                    }
+                                    readonly property bool appPresent:
+                                        namespaces.indexOf("app") >= 0
+                                    // Effective selection: the user's choice, or
+                                    // the app group by default (All when no app).
+                                    readonly property var selectedNs: userNs === undefined
+                                        ? (appPresent ? ["app"] : [])
+                                        : userNs
+                                    function toggleNs(ns) {
+                                        var base = selectedNs
+                                        if (base.indexOf(ns) >= 0)
+                                            userNs = base.filter(function (x) { return x !== ns })
+                                        else
+                                            userNs = base.concat([ns])
+                                    }
+                                    // Commands passing the filter; commands with
+                                    // no namespace prefix always show.
+                                    readonly property var visibleCommands: {
+                                        var q = (filterText || "").trim().toLowerCase()
+                                        var out = []
+                                        for (var i = 0; i < consoleCommands.length; ++i) {
+                                            var c = consoleCommands[i]
+                                            var label = (c.label || "").toString()
+                                            if (q !== "" && label.toLowerCase().indexOf(q) < 0)
+                                                continue
+                                            var colon = label.indexOf(":")
+                                            var ns = colon < 0 ? "" : label.slice(0, colon)
+                                            if (ns !== "" && selectedNs.length > 0
+                                                    && selectedNs.indexOf(ns) < 0)
+                                                continue
+                                            out.push(c)
+                                        }
+                                        return out
+                                    }
+                                    // The blocked-run alert belongs to this
+                                    // section when its command lives here.
+                                    readonly property bool blockedHere: {
+                                        var b = dashboard.blockedRun
+                                        if (!b || !b.commandId)
+                                            return false
+                                        for (var i = 0; i < consoleCommands.length; ++i) {
+                                            if (consoleCommands[i].id === b.commandId)
+                                                return true
+                                        }
+                                        return false
+                                    }
+
+                                    // Header: [framework icon] <Framework> <version>
+                                    // — count (no binary prefix, no env)
+                                    RowLayout {
+                                        spacing: Theme.spacingSm
+                                        Layout.fillWidth: true
+
+                                        Image {
+                                            id: consoleFrameworkIcon
+                                            Layout.preferredWidth: 24
+                                            Layout.preferredHeight: 24
+                                            Layout.alignment: Qt.AlignVCenter
+                                            fillMode: Image.PreserveAspectFit
+                                            smooth: true
+                                            // qrc first (AGENTS.md); builds that ship
+                                            // the icon directory next to the binary
+                                            // fall back to it when no resource is
+                                            // compiled in (file:// icons elsewhere).
+                                            readonly property string iconFile:
+                                                consoleSection.framework.toLowerCase() === "laravel"
+                                                    ? "laravel.png"
+                                                    : (Theme.isDark
+                                                       ? "symfony-dark.png" : "symfony.png")
+                                            readonly property url qrcSource:
+                                                "qrc:/icons/" + iconFile
+                                            property bool qrcMissing: false
+                                            onStatusChanged: {
+                                                if (status === Image.Error && !qrcMissing)
+                                                    qrcMissing = true
+                                            }
+                                            source: qrcMissing
+                                                ? (typeof iconBaseUrl !== "undefined"
+                                                   ? iconBaseUrl + iconFile : qrcSource)
+                                                : qrcSource
+                                        }
+
+                                        Label {
+                                            text: consoleSection.headerText
+                                            color: Theme.textPrimary
+                                            font.pixelSize: Theme.fontSizeMd
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                            Layout.alignment: Qt.AlignVCenter
+                                            transform: Translate { y: -2 }
+                                        }
+
+                                        // Meta: "bin/console · Symfony 7.1 · env
+                                        // dev" — monospace, dimmed (design token,
+                                        // not Theme.textMuted).
+                                        Label {
+                                            visible: consoleSection.metaText !== ""
+                                            text: consoleSection.metaText
+                                            color: Theme.textDimmed
+                                            font.family: "Menlo"
+                                            font.pixelSize: Theme.fontSizeSm
+                                            elide: Text.ElideRight
+                                            Layout.alignment: Qt.AlignVCenter
+                                            Layout.maximumWidth: Math.round(
+                                                folderPage.width * 0.35)
+                                        }
+
+                                        Rectangle {
+                                            Layout.fillWidth: true
+                                            Layout.preferredHeight: 1
+                                            Layout.alignment: Qt.AlignVCenter
+                                            color: Theme.border
+                                        }
+
+                                        Label {
+                                            // "9 · +142 framework": the visible
+                                            // count in normal text color, the
+                                            // hidden-framework tail dimmed.
+                                            text: consoleSection.countText
+                                            color: Theme.textMuted
+                                            font.pixelSize: Theme.fontSizeSm
+                                            font.family: "Menlo"
+                                            Layout.alignment: Qt.AlignVCenter
+                                        }
+                                    }
+
+                                    // Filter input + namespace toggle chips on
+                                    // one line (design): the input owns a
+                                    // fixed 340px column, the chips flow in
+                                    // their own column to the right and wrap
+                                    // inside it, never under the input.
+                                    RowLayout {
+                                        Layout.fillWidth: true
+                                        spacing: Theme.spacingSm
+
+                                        UiInput {
+                                            Layout.preferredWidth: 340
+                                            Layout.alignment: Qt.AlignVCenter
+                                            leadingIconSource: Theme.icon("filter")
+                                            placeholderText: qsTr("Filter by name…")
+                                            text: consoleSection.filterText
+                                            onTextChanged: consoleSection.filterText = text
+                                        }
+
+                                        // Chips column. Flow inside a Layout
+                                        // does not reliably propagate a
+                                        // wrap-height change to the layout, so
+                                        // the height is pinned explicitly.
+                                        Item {
+                                            Layout.fillWidth: true
+                                            Layout.alignment: Qt.AlignVCenter
+                                            Layout.preferredHeight: chipsFlow.implicitHeight
+
+                                            Flow {
+                                                id: chipsFlow
+                                                anchors.left: parent.left
+                                                anchors.right: parent.right
+                                                spacing: Theme.spacingXs
+
+                                                UiTag {
+                                                    label: "All"
+                                                    size: "sm"
+                                                    color: consoleSection.selectedNs.length === 0
+                                                        ? "primary" : "neutral"
+                                                    variant: consoleSection.selectedNs.length === 0
+                                                        ? "soft" : "subtle"
+                                                    MouseArea {
+                                                        anchors.fill: parent
+                                                        cursorShape: Qt.PointingHandCursor
+                                                        onClicked: consoleSection.userNs = []
+                                                    }
+                                                }
+
+                                                Repeater {
+                                                    model: consoleSection.namespaces
+
+                                                    delegate: UiTag {
+                                                        required property var modelData
+                                                        label: modelData
+                                                        size: "sm"
+                                                        color: consoleSection.selectedNs.indexOf(modelData) >= 0
+                                                            ? "primary" : "neutral"
+                                                        variant: consoleSection.selectedNs.indexOf(modelData) >= 0
+                                                            ? "soft" : "subtle"
+                                                        MouseArea {
+                                                            anchors.fill: parent
+                                                            cursorShape: Qt.PointingHandCursor
+                                                            onClicked: consoleSection.toggleNs(modelData)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    // Run gated on missing required args (from a
+                                    // card click here or the C++ runBlocked signal).
+                                    UiAlert {
+                                        Layout.fillWidth: true
+                                        visible: consoleSection.blockedHere
+                                                && (dashboard.blockedRun.missing || []).length > 0
+                                        closable: true
+                                        color: "warning"
+                                        variant: "soft"
+                                        title: qsTr("Run blocked: missing required arguments")
+                                        description: (dashboard.blockedRun.label || "")
+                                            + " — " + (dashboard.blockedRun.missing || []).join(", ")
+                                        onCloseRequested: dashboard.clearRunBlocked()
+                                    }
+
+                                    GridLayout {
+                                        visible: consoleSection.visibleCommands.length > 0
+                                        Layout.fillWidth: true
+                                        columns: Math.max(1, Math.min(4,
+                                            Math.floor((folderPage.width - 2 * Theme.spacingLg + 8) / 258)))
+                                        columnSpacing: Theme.spacingSm
+                                        rowSpacing: Theme.spacingSm
+                                        uniformCellWidths: true
+                                        uniformCellHeights: true
+
+                                        Repeater {
+                                            model: consoleSection.visibleCommands
+
+                                            delegate: ConsoleCommandCard {
+                                                required property var modelData
+                                                Layout.fillWidth: true
+                                                projectId: sectionDelegate.sectionId
+                                                command: modelData
+                                            }
+                                        }
+                                    }
+
+                                    Label {
+                                        // Empty state: the filter or the group
+                                        // selection hides every command.
+                                        visible: consoleSection.visibleCommands.length === 0
+                                                 && consoleSection.consoleCommands.length > 0
+                                        text: qsTr("No commands match")
+                                        color: Theme.textMuted
+                                        font.pixelSize: Theme.fontSizeSm
                                     }
                                 }
                             }
@@ -1312,7 +2046,7 @@ Rectangle {
                                         * ToolPlugins.manifestAspect("custom"))
                                     Layout.preferredHeight: ToolPlugins.manifestHeaderHeight("custom")
                                     Layout.alignment: Qt.AlignVCenter
-                                    source: iconBaseUrl + ToolPlugins.manifestIcon("custom", Theme.isDark)
+                                    source: Theme.icon(ToolPlugins.manifestIcon("custom"))
                                     fillMode: Image.PreserveAspectFit
                                     smooth: true
                                 }
@@ -1390,26 +2124,13 @@ Rectangle {
                                     horizontalAlignment: Text.AlignHCenter
                                 }
 
-                                Button {
+                                UiButton {
                                     anchors.horizontalCenter: parent.horizontalCenter
                                     width: 200
-                                    height: 34
-                                    font.pixelSize: 12
-
-                                    background: Rectangle {
-                                        radius: 6
-                                        color: Theme.primary
-                                    }
-
-                                    contentItem: Label {
-                                        text: qsTr("Add custom command")
-                                        color: Theme.primaryForeground
-                                        font.pixelSize: 12
-                                        font.bold: true
-                                        horizontalAlignment: Text.AlignHCenter
-                                        verticalAlignment: Text.AlignVCenter
-                                    }
-
+                                    label: qsTr("Add custom command")
+                                    color: "primary"
+                                    variant: "solid"
+                                    size: "sm"
                                     onClicked: dashboard.addCustomRequested(folderPage.folderPath)
                                 }
                             }
@@ -1482,6 +2203,26 @@ Rectangle {
                     id: dockerPage
                     anchors.fill: parent
                     pageActive: dashboard.activePage === "docker"
+                }
+            }
+
+            // API page: shell only (T4/T5/T6 fill it). Permanent instance
+            // like Docker/Databases; data loading stays lazy via pageActive.
+            Item {
+                id: apiPageWrap
+                objectName: "apiPageWrap"
+                anchors.fill: parent
+                enabled: dashboard.activePage === "api"
+                visible: opacity > 0
+                opacity: dashboard.activePage === "api" ? 1 : 0
+                x: dashboard.activePage === "api" ? 0 : Theme.spacingXl
+                Behavior on opacity { NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard } }
+                Behavior on x { NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard } }
+
+                ApiPage {
+                    id: apiPage
+                    anchors.fill: parent
+                    pageActive: dashboard.activePage === "api"
                 }
             }
         }

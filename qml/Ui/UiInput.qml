@@ -1,10 +1,11 @@
 import QtQuick
 import QtQuick.Controls
+import "../"
 
-// UiInput — текстовое поле в визуале Nuxt UI Input (size md, variant
-// outline): bg-default, inset-ring, rounded-md, плейсхолдер dimmed;
-// в фокусе кольцо красится в accent. Отступы px-2.5/py-1.5 —
-// специфичны для компонента (в шаге Theme их нет).
+// UiInput — text field styled after Nuxt UI Input (size md, variant
+// outline): bg-default, inset-ring, rounded-md, dimmed placeholder;
+// the focus ring is painted in accent. The px-2.5/py-1.5 paddings are
+// specific to this component (there is no step for them in Theme).
 TextField {
     id: root
 
@@ -30,8 +31,8 @@ TextField {
     bottomPadding: 6
 
     background: Item {
-        // Focus ring: еле заметное внешнее кольцо (accent/25, как
-        // outline-{color}/25 у Nuxt), видно только в фокусе.
+        // Focus ring: a barely visible outer ring (accent/25, matching
+        // outline-{color}/25 in Nuxt), shown only while focused.
         Rectangle {
             anchors.fill: parent
             anchors.margins: -3
@@ -46,7 +47,7 @@ TextField {
         Rectangle {
             anchors.fill: parent
             radius: Theme.radiusSm
-            color: Theme.cardBackground
+            color: Theme.windowBackground
             border.color: root.activeFocus ? Theme.accent : Theme.border
             border.width: 1
         }

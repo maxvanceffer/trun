@@ -20,6 +20,7 @@
 #include "systemstats.h"
 #include "databaseservice.h"
 #include "dockerservice.h"
+#include "apiservice.h"
 #include "updater.h"
 #include <QWKQuick/qwkquickglobal.h>
 #ifdef Q_OS_MACOS
@@ -112,6 +113,7 @@ int main(int argc, char *argv[])
     static auto systemStats = new SystemStats();
     static auto databaseService = new DatabaseService();
     static auto dockerService = new DockerService();
+    static auto apiService = new ApiService(settings);
     static auto updater = new Updater(settings, commandExecutor);
     projectService->setSettings(settings);
     projectService->setExecutor(commandExecutor);
@@ -147,6 +149,7 @@ int main(int argc, char *argv[])
     engine.rootContext()->setContextProperty("systemStats", systemStats);
     engine.rootContext()->setContextProperty("databaseService", databaseService);
     engine.rootContext()->setContextProperty("dockerService", dockerService);
+    engine.rootContext()->setContextProperty("apiService", apiService);
     engine.rootContext()->setContextProperty("updater", updater);
     engine.rootContext()->setContextProperty("treeModel", projectService->treeModel());
     engine.rootContext()->setContextProperty("Settings", settings);
@@ -156,15 +159,15 @@ int main(int argc, char *argv[])
     QString exePath = QCoreApplication::applicationDirPath();
     QString iconsPath;
     QString devIconsPath = QDir::cleanPath(exePath + "/icons");
-    if (QFile::exists(devIconsPath + "/npm-32px.png")) {
+    if (QFile::exists(devIconsPath + "/npm.png")) {
         iconsPath = devIconsPath;
     } else {
         QString bundleIconsPath = QDir::cleanPath(exePath + "/../../icons");
-        if (QFile::exists(bundleIconsPath + "/npm-32px.png")) {
+        if (QFile::exists(bundleIconsPath + "/npm.png")) {
             iconsPath = bundleIconsPath;
         } else {
             QString deepIconsPath = QDir::cleanPath(exePath + "/../../../../Resources/icons");
-            if (QFile::exists(deepIconsPath + "/npm-32px.png"))
+            if (QFile::exists(deepIconsPath + "/npm.png"))
                 iconsPath = deepIconsPath;
         }
     }

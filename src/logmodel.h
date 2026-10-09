@@ -10,18 +10,20 @@
 
 struct LogEntry {
     QString timestamp;
-    QString level;   // слой 1: stdout/stderr/system/error
-    QString target;  // слой 1: label команды
-    QString message; // сырая строка
-    QString level2;  // распознанный уровень слоя 2 ("" если нет)
-    QString channel; // распознанный канал слоя 2 ("" если нет)
+    QString level;   // layer 1: stdout/stderr/system/error
+    QString target;  // layer 1: command label
+    QString message; // raw line
+    QString level2;  // recognized layer-2 level ("" when absent)
+    QString channel; // recognized layer-2 channel ("" when absent)
     bool parsed = false;
     qint64 arrivedMs = 0;
+    QString kind;    // display hint: "echo" for the launch line, "" otherwise
 };
 
-// Console history выбранного Command с фильтрами (решение: движок на C++/модель).
-// count()/get()/data() работают по видимым строкам; observed* — по всем,
-// чтобы чипсы не исчезали при активной фильтрации.
+// Console history of the selected command with filters (decision: the
+// engine lives in C++/model). count()/get()/data() work over visible
+// rows; observed* scans all entries so the chips do not vanish during
+// active filtering.
 class LogModel : public QAbstractListModel {
     Q_OBJECT
     Q_PROPERTY(int shownCount READ shownCount NOTIFY countsChanged)
@@ -52,9 +54,10 @@ public:
         return roles;
     }
 
-    Q_INVOKABLE void add(const QString &level, const QString &target, const QString &message) {
+    Q_INVOKABLE void add(const QString &level, const QString &target, const QString &message,
+                         qlonglong at = 0, const QString &kind = {}) {
         // Cap history at 1000 entries, dropping the oldest first.
-        // Trim идёт ДО append, чтобы visible-индексы не протухали.
+        // Trim happens BEFORE append so the visible indices do not rot.
         while (m_entries.size() >= 1000) {
             const int visPos = m_visible.indexOf(0);
             if (visPos >= 0) {
@@ -66,16 +69,7 @@ public:
             for (int &v : m_visible)
                 --v;
         }
-        LogEntry e;
-        e.timestamp = QDateTime::currentDateTime().toString("HH:mm:ss.zzz");
-        e.level = level;
-        e.target = target;
-        e.message = message;
-        e.arrivedMs = QDateTime::currentMSecsSinceEpoch();
-        const ParsedLogLine p = LogParser::parse(message);
-        e.parsed = p.ok;
-        e.level2 = p.level;
-        e.channel = p.channel;
+        LogEntry e = makeEntry(level, target, message, at, kind);
         m_entries.append(e);
         const int srcRow = m_entries.size() - 1;
         bool hiddenUnparsed = false;
@@ -99,9 +93,35 @@ public:
         emit countsChanged();
     }
 
+    // Bulk history load in one call (e.g. re-filling the model when the
+    // selection changes in Dashboard): one reset instead of N add() calls.
+    // Per-row add() would emit N×(rowsInserted + countsChanged), and the
+    // QML console re-parses the whole RichText HTML per signal — quadratic
+    // on open for long histories.
+    Q_INVOKABLE void addBatch(const QVariantList &lines) {
+        if (lines.isEmpty())
+            return;
+        beginResetModel();
+        for (const QVariant &v : lines) {
+            const QVariantMap m = v.toMap();
+            m_entries.append(makeEntry(
+                m.value(QStringLiteral("level")).toString(),
+                m.value(QStringLiteral("target")).toString(),
+                m.value(QStringLiteral("message")).toString(),
+                m.value(QStringLiteral("at")).toLongLong(),
+                m.value(QStringLiteral("kind")).toString()));
+        }
+        // Same cap as add(): the last 1000 entries.
+        while (m_entries.size() > 1000)
+            m_entries.removeFirst();
+        rebuildVisible();
+        endResetModel();
+        emit countsChanged();
+    }
+
     // Random access for the single-text console (DetailPage rebuilds and
     // appends HTML without going through ListView delegates).
-    // Индексы — по видимым строкам.
+    // Indices are over visible rows.
     Q_INVOKABLE int count() const { return m_visible.size(); }
 
     Q_INVOKABLE QVariantMap get(int row) const {
@@ -113,10 +133,12 @@ public:
             {QStringLiteral("level"), e.level},
             {QStringLiteral("target"), e.target},
             {QStringLiteral("message"), e.message},
+            {QStringLiteral("at"), e.arrivedMs},
+            {QStringLiteral("kind"), e.kind},
         };
     }
 
-    // Фильтры (AND; пустой фильтр выключен; sinceMin < 0 = всё время).
+    // Filters (AND; an empty filter is off; sinceMin < 0 = all time).
     Q_INVOKABLE void setFilters(const QString &query, const QStringList &levels,
                                 const QStringList &channels, int sinceMin) {
         m_query = query;
@@ -131,7 +153,7 @@ public:
 
     Q_INVOKABLE void resetFilters() { setFilters({}, {}, {}, -1); }
 
-    // Наблюдаемые значения по всем строкам (для чипсов + MCP-шапки).
+    // Observed values across all rows (for chips + the MCP header).
     Q_INVOKABLE QStringList observedLevels() const {
         QStringList out;
         for (const auto &e : m_entries) {
@@ -173,6 +195,24 @@ signals:
     void countsChanged();
 
 private:
+    // `at` is the arrival timestamp in ms since epoch (0 = now): history
+    // reloads carry the original times so relative gutters stay correct.
+    static LogEntry makeEntry(const QString &level, const QString &target, const QString &message,
+                              qlonglong at = 0, const QString &kind = {}) {
+        LogEntry e;
+        e.arrivedMs = at > 0 ? at : QDateTime::currentMSecsSinceEpoch();
+        e.timestamp = QDateTime::fromMSecsSinceEpoch(e.arrivedMs).toString("HH:mm:ss.zzz");
+        e.level = level;
+        e.target = target;
+        e.message = message;
+        e.kind = kind;
+        const ParsedLogLine p = LogParser::parse(message);
+        e.parsed = p.ok;
+        e.level2 = p.level;
+        e.channel = p.channel;
+        return e;
+    }
+
     bool matchesFilter(const LogEntry &e, bool &hiddenUnparsed) const {
         hiddenUnparsed = false;
         if (m_sinceMin >= 0
@@ -202,7 +242,7 @@ private:
     }
 
     QList<LogEntry> m_entries;
-    QList<int> m_visible; // source-индексы видимых строк
+    QList<int> m_visible; // source indices of visible rows
     int m_hiddenUnparsed = 0;
     QString m_query;
     QStringList m_levels;

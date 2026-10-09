@@ -174,23 +174,23 @@ function manifestHeaderHeight(manifest) {
     }
 }
 // Manifest icons head the folder-page sections (sidebar uses the
-// file-terminal marker instead). "custom" uses the bash glyph (dual-theme,
-// no variants), unknown manifests the default glyph.
-// dark picks the light variant.
-function manifestIcon(manifest, dark) {
+// file marker instead). Returns the logical icon name; Theme.icon
+// resolves the themed path. "custom" uses the bash glyph, unknown
+// manifests the default glyph.
+function manifestIcon(manifest) {
     switch (manifest) {
-    case "package.json": return "npm-32px.png"
-    case "Cargo.toml": return dark ? "rust-dark-32px.png" : "rust-light-32px.png"
-    case "go.mod": return dark ? "go-dark-32px.png" : "go-light-32px.png"
-    case "pyproject.toml": return "python-32px.png"
-    case "pom.xml": return "java-32px.png"
-    case "build.gradle": return "gradle-32px.png"
-    case "CMakeLists.txt": return "cmake-32px.png"
-    case "composer.json": return "composer-32px.png"
-    case "Gemfile": return "ruby-32px.png"
-    case "mix.exs": return "elixir-32px.png"
-    case "custom": return dark ? "bash-dark.png" : "bash.png"
-    default: return "default-32px.png"
+    case "package.json": return "npm"
+    case "Cargo.toml": return "rust"
+    case "go.mod": return "go"
+    case "pyproject.toml": return "python"
+    case "pom.xml": return "java"
+    case "build.gradle": return "gradle"
+    case "CMakeLists.txt": return "cmake"
+    case "composer.json": return "composer"
+    case "Gemfile": return "ruby"
+    case "mix.exs": return "elixir"
+    case "custom": return "bash"
+    default: return "default"
     }
 }
 
