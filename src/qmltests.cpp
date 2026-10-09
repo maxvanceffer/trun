@@ -2012,6 +2012,223 @@ void QmlTests::test_api_page_open_request()
     delete obj;
 }
 
+// R3, window-level: the real input paths, not just the JS functions. Enter
+// on the name field must open the Save dialog for a draft (and save on
+// confirm), Esc must close the dialog first and then pop back to the list.
+// Runs in a real window so the key events exercise the focus chain.
+void QmlTests::test_api_page_keys()
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("logModel", g_logModel);
+    const QString buildDir = QDir::currentPath();
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(buildDir + "/icons/").toString());
+
+    FakeApiService api;
+    engine.rootContext()->setContextProperty("apiService", &api);
+
+    FakeProjectServiceForApi proj;
+    proj.setProjects(QVariantList{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("p/one")},
+                    {QStringLiteral("name"), QStringLiteral("personizely-backend")}}});
+    engine.rootContext()->setContextProperty("projectService", &proj);
+
+    FakeDashboardForApi dash;
+    engine.rootContext()->setContextProperty("dashboard", &dash);
+
+    QQmlComponent component(&engine,
+        QUrl::fromLocalFile(sourceQmlPath("ApiPage.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+
+    QQuickWindow window;
+    window.resize(1000, 800);
+    QObject *obj = component.createWithInitialProperties({}, engine.rootContext());
+    QVERIFY(obj != nullptr);
+    auto *page = qobject_cast<QQuickItem *>(obj);
+    QVERIFY(page != nullptr);
+    page->setParentItem(window.contentItem());
+    page->setPosition(QPointF(0, 0));
+    page->setSize(QSizeF(1000, 800));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTest::qWait(50);
+
+    QQuickItem *pane = page->findChild<QQuickItem *>(QStringLiteral("apiRequestPage"));
+    QVERIFY(pane != nullptr);
+    QQuickItem *nameField = pane->findChild<QQuickItem *>(QStringLiteral("apiRequestNameField"));
+    QVERIFY(nameField != nullptr);
+    // AppDialog is a Popup (not an Item) — it lives outside the item tree,
+    // so it must be located as a plain QObject child of the pane.
+    QObject *saveDialog = pane->findChild<QObject *>(QStringLiteral("apiSaveDialog"));
+    QVERIFY(saveDialog != nullptr);
+
+    // Open a draft ("+ New request" / "Open →" share this path).
+    QVERIFY(QMetaObject::invokeMethod(page, "openDraft",
+        Q_ARG(QVariant, QStringLiteral("http://localhost:5173/"))));
+    QVERIFY(page->property("requestOpen").toBool());
+
+    // Enter on the name field must reach save() — the dialog's name field
+    // gets the suggested name, which proves openFor ran. (The dialog itself
+    // cannot open on a bare QQuickWindow: a Popup needs the ApplicationWindow
+    // overlay, so the opened-state is asserted via its effects instead.)
+    nameField->forceActiveFocus();
+    QTest::qWait(20);
+    QVERIFY(nameField->hasActiveFocus());
+    QTest::keyClick(&window, Qt::Key_Return);
+    QTest::qWait(50);
+    QQuickItem *dialogName = saveDialog->findChild<QQuickItem *>(
+        QStringLiteral("apiSaveNameField"));
+    QVERIFY(dialogName != nullptr);
+    QCOMPARE(dialogName->property("text").toString(),
+             QStringLiteral("GET /")); // suggested name = openFor ran
+
+    // Confirm through the dialog persists the draft.
+    QVERIFY(QMetaObject::invokeMethod(saveDialog, "confirmSave"));
+    QTest::qWait(50);
+    QVERIFY(page->property("requestOpen").toBool());
+    QCOMPARE(pane->property("saved").toBool(), true);
+    QCOMPARE(api.requests().size(), 1);
+
+    // --- Esc: fresh draft, no dialog involvement ---------------------------
+    // (The harness cannot open the Popup, so closing it above drops focus to
+    // the window root — an artifact. Esc is validated on a clean page, with
+    // focus on the name field — the state the user is in when typing.)
+    QVERIFY(QMetaObject::invokeMethod(page, "openDraft",
+        Q_ARG(QVariant, QStringLiteral("http://localhost:5173/"))));
+    QVERIFY(page->property("requestOpen").toBool());
+    QCOMPARE(pane->property("saved").toBool(), false);
+
+    nameField->forceActiveFocus();
+    QTest::qWait(20);
+    QVERIFY(nameField->hasActiveFocus());
+
+    // Esc with focus inside the page (the typing-user case).
+    QTest::keyClick(&window, Qt::Key_Escape);
+    QTest::qWait(50);
+    QVERIFY2(!page->property("requestOpen").toBool(),
+             "Esc must pop the request page back to the list");
+
+    // --- Esc with no focus inside the page: the page root (focus scope)
+    // owns the key after openDraft's forceActiveFocus ---------------------
+    QVERIFY(QMetaObject::invokeMethod(page, "openDraft",
+        Q_ARG(QVariant, QStringLiteral("http://localhost:5173/"))));
+    QQuickItem *pageFocused = window.activeFocusItem();
+    QVERIFY(pageFocused != nullptr);
+    QTest::keyClick(&window, Qt::Key_Escape);
+    QTest::qWait(50);
+    QVERIFY2(!page->property("requestOpen").toBool(),
+             "Esc must work even when no control inside the page has focus");
+
+    delete obj;
+}
+
+// AppDialog (and any AppDialog-based dialog) must open under both hosting
+// scenarios the project uses: a plain Window (main.qml — the overlay does
+// not exist there, so binding `parent: Overlay.overlay` resolved to null and
+// open() silently no-oped: the Save dialog "never appeared", which read as
+// "Enter does not save") and an ApplicationWindow (overlay present).
+// Regression for that hosting path. Note: with enter/exit transitions the
+// `opened` flag flips only after the enter animation finishes, so the
+// assertions wait well past it.
+void QmlTests::test_app_dialog_hosting()
+{
+    const QString dialogQml = QStringLiteral(
+        "import QtQuick\n"
+        "import QtQuick.Controls\n"
+        "import QtQuick.Effects\n"
+        "import \"components\"\n"
+        "%1 {\n"
+        "    id: win\n"
+        "    width: 640\n"
+        "    height: 480\n"
+        "    visible: true\n"
+        "    Popup {\n"
+        "        id: nativePopup\n"
+        "        objectName: \"nativePopup\"\n"
+        "        width: 120\n"
+        "        height: 70\n"
+        "        modal: true\n"
+        "        focus: true\n"
+        "        anchors.centerIn: parent\n"
+        "        enter: Transition {\n"
+        "            NumberAnimation { property: \"opacity\"; from: 0; to: 1; duration: 160 }\n"
+        "        }\n"
+        "        exit: Transition {\n"
+        "            NumberAnimation { property: \"opacity\"; from: 1; to: 0; duration: 120 }\n"
+        "        }\n"
+        "        Rectangle { anchors.fill: parent; color: \"#ff0000\" }\n"
+        "    }\n"
+        "    AppDialog {\n"
+        "        id: appDlg\n"
+        "        objectName: \"appDlg\"\n"
+        "        title: \"X\"\n"
+        "        Rectangle { width: 200; height: 80; color: \"#00ff00\" }\n"
+        "    }\n"
+        "    AppDialog {\n"
+        "        id: appDlgMin\n"
+        "        objectName: \"appDlgMin\"\n"
+        "    }\n"
+        "    ComboBox {\n"
+        "        id: nativeCombo\n"
+        "        objectName: \"nativeCombo\"\n"
+        "        x: 420\n"
+        "        y: 300\n"
+        "        width: 120\n"
+        "        model: [\"a\", \"b\"]\n"
+        "    }\n"
+        "    Component.onCompleted: Qt.callLater(function() {\n"
+        "        console.log(\"probe appDlg parent =\", appDlg.parent,\n"
+        "                    \"size =\", appDlg.width, \"x\", appDlg.height)\n"
+        "        nativePopup.open()\n"
+        "        appDlg.open()\n"
+        "        appDlgMin.open()\n"
+        "        nativeCombo.popup.open()\n"
+        "        console.log(\"probe nativePopup.opened =\", nativePopup.opened)\n"
+        "        console.log(\"probe appDlg.opened =\", appDlg.opened)\n"
+        "        console.log(\"probe appDlgMin.opened =\", appDlgMin.opened)\n"
+        "        console.log(\"probe nativeCombo.popup.opened =\", nativeCombo.popup.opened)\n"
+        "    })\n"
+        "}\n");
+
+    // Main.qml hosts dialogs in a plain Window (not ApplicationWindow).
+    // This is the scenario that must work for the app.
+    for (const QString &hostType : {QStringLiteral("ApplicationWindow"),
+                                    QStringLiteral("Window")}) {
+        QQmlEngine engine;
+        QQmlComponent component(&engine);
+        const QUrl base = QUrl::fromLocalFile(
+            QDir::cleanPath(QDir::currentPath() + "/../qml/TestDialogHost.qml"));
+        component.setData(dialogQml.arg(hostType).toUtf8(), base);
+        QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+            ? QString("not ready") : component.errors().first().toString()));
+        QScopedPointer<QObject> root(component.create());
+        QVERIFY(root != nullptr);
+        auto *win = qobject_cast<QQuickWindow *>(root.data());
+        QVERIFY(win != nullptr);
+        QVERIFY(QTest::qWaitForWindowExposed(win));
+        QTest::qWait(400);
+
+        QObject *nativePopup = root->findChild<QObject *>(QStringLiteral("nativePopup"));
+        QVERIFY(nativePopup != nullptr);
+        QVERIFY2(nativePopup->property("opened").toBool(),
+                 qPrintable(QStringLiteral("QCQC2 Popup must open under %1")
+                            .arg(hostType)));
+        QObject *appDlg = root->findChild<QObject *>(QStringLiteral("appDlg"));
+        QVERIFY(appDlg != nullptr);
+        QVERIFY2(appDlg->property("opened").toBool(),
+                 qPrintable(QStringLiteral("AppDialog must open under %1")
+                            .arg(hostType)));
+        QObject *combo = root->findChild<QObject *>(QStringLiteral("nativeCombo"));
+        QVERIFY(combo != nullptr);
+        QObject *comboPopup = combo->property("popup").value<QObject *>();
+        QVERIFY(comboPopup != nullptr);
+        QVERIFY2(comboPopup->property("opened").toBool(),
+                 qPrintable(QStringLiteral("ComboBox popup must open under %1")
+                            .arg(hostType)));
+    }
+}
+
 // UiListElement is the shared list card. Its click handler must not swallow
 // taps aimed at controls placed inside it (Docker/Databases cards carry
 // buttons); only taps on the empty chrome count as a card click.

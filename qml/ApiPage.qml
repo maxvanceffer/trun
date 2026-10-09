@@ -14,6 +14,12 @@ Item {
     id: apiPage
     objectName: "apiPage"
 
+    // Page-level focus scope: the page owns key handling (Esc pops the
+    // request page) no matter where focus sits inside it. Plain Items never
+    // receive Keys events — only items on the focus path do.
+    focus: true
+    activeFocusOnTab: false
+
     readonly property var svc: (typeof apiService !== "undefined") ? apiService : null // qmllint disable unqualified
     readonly property var lm: (typeof logModel !== "undefined") ? logModel : null // qmllint disable unqualified
     readonly property var projSvc: projectService // qmllint disable unqualified
@@ -122,12 +128,14 @@ Item {
             return
         requestMap = svc.makeDraft(url || "")
         requestPane.openWith(requestMap, false)
+        apiPage.forceActiveFocus()
     }
 
     function openSavedRequest(map) {
         // Detach: the C++ list must not see edits until Save.
         requestMap = JSON.parse(JSON.stringify(map))
         requestPane.openWith(requestMap, true)
+        apiPage.forceActiveFocus()
     }
 
     function openHistoryEntry(entry) {
@@ -136,6 +144,7 @@ Item {
         requestMap = svc.makeDraft(entry.url || "")
         requestMap.method = entry.method || "GET"
         requestPane.openWith(requestMap, false)
+        apiPage.forceActiveFocus()
     }
 
     // Leaving the request page discards unsaved edits (decided; no prompt).

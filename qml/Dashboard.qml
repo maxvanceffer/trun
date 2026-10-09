@@ -544,6 +544,11 @@ Rectangle {
         // crumb in time.
         if (crumbDatabasesLabel)
             controls.push(crumbDatabasesLabel)
+        // API crumb: marks the request-page back path (its MouseArea only
+        // appears while a request is open, but the label must be registered
+        // unconditionally for the same reason as the databases one).
+        if (crumbApiLabel)
+            controls.push(crumbApiLabel)
         for (var j = 0; j < controls.length; ++j) {
             if (controls[j])
                 agent.setHitTestVisible(controls[j], true)

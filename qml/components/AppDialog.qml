@@ -32,7 +32,13 @@ Popup {
     onClosed: { if (!_accepted) root.rejected(); _accepted = false }
 
     // ---- позиция и размер ----
-    parent: Overlay.overlay
+    // Hosting: the overlay only exists under an ApplicationWindow. The app's
+    // main.qml is a plain Window — binding parent to Overlay.overlay there
+    // resolves to null and open() silently no-ops, so the Save/Environments/
+    // Import dialogs could never appear. Without an explicit parent QQC2
+    // hosts the popup on its declaration item (a page in the app window),
+    // which always has a window; center/closePolicy still work. Modal dim is
+    // overlay-only, so it is a plain centered popup in the app.
     anchors.centerIn: parent
     width: Math.min(dialogWidth, parent ? parent.width - 48 : dialogWidth)
     height: dialogHeight > 0

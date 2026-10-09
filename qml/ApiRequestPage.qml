@@ -96,6 +96,18 @@ Item {
         return true
     }
 
+    // Save entry point shared by the Save button and Enter in the name
+    // field: drafts open the dialog (suggested name, project), saved
+    // requests persist straight away — no mouse needed for a rename.
+    function save() {
+        if (!reqRoot.requestMap)
+            return
+        if (reqRoot.saved)
+            reqRoot.doSave()
+        else
+            saveDialog.openFor(reqRoot.requestMap)
+    }
+
     ColumnLayout {
         anchors.fill: parent
         anchors.margins: Theme.spacingLg
@@ -110,6 +122,7 @@ Item {
 
             UiInput {
                 id: nameField
+                objectName: "apiRequestNameField"
                 Layout.preferredWidth: 282
                 variant: "ghost"
                 font.weight: Font.DemiBold
@@ -121,6 +134,13 @@ Item {
                         reqRoot.dirty = true
                         reqRoot.renameOccurred()
                     }
+                }
+                // Enter saves the edited name without reaching for the mouse,
+                // then leaves edit mode: focus returns to the page root so the
+                // input's ring drops and Esc keeps working at page level.
+                onAccepted: {
+                    reqRoot.save()
+                    nameField.focus = false
                 }
             }
 
@@ -137,19 +157,15 @@ Item {
 
             UiButton {
                 Layout.alignment: Qt.AlignVCenter
+                // Shown only while there is something to save: drafts are
+                // always unsaved, a saved request only after an edit — the
+                // same predicate as the "unsaved changes" label.
+                visible: reqRoot.showUnsaved
                 label: reqRoot.saveLabel()
                 color: "neutral"
                 variant: "outline"
                 size: "sm"
-                onClicked: {
-                    if (!reqRoot.requestMap)
-                        return
-                    if (reqRoot.saved) {
-                        reqRoot.doSave()
-                    } else {
-                        saveDialog.openFor(reqRoot.requestMap)
-                    }
-                }
+                onClicked: reqRoot.save()
             }
         }
 
@@ -162,6 +178,7 @@ Item {
     // through doSave().
     AppDialog {
         id: saveDialog
+        objectName: "apiSaveDialog"
         title: qsTr("Save request")
         subtitle: qsTr("It will appear in API under the chosen project.")
         dialogWidth: 460
@@ -225,6 +242,7 @@ Item {
 
             UiInput {
                 id: saveNameField
+                objectName: "apiSaveNameField"
                 Layout.fillWidth: true
                 placeholderText: qsTr("e.g. Get campaign")
                 selectByMouse: true
