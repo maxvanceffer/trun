@@ -1437,23 +1437,12 @@ void QmlTests::test_api_import_curl()
     QCOMPARE(errors.count(), 2);
     QCOMPARE(svc.requests().size(), 3);
 
-    // Untitled draft matches the design's newRequest().
-    QVERIFY(!svc.newUntitled().isEmpty());
-    const QVariantMap draft = svc.requests().at(3).toMap();
-    QCOMPARE(draft.value(QStringLiteral("name")).toString(),
-             QStringLiteral("Untitled request"));
-    QCOMPARE(draft.value(QStringLiteral("url")).toString(),
-             QStringLiteral("{{baseUrl}}/"));
-
-    // A running-server "Open →" opens the same draft with its URL pasted in.
-    QVERIFY(!svc.newUntitled(QStringLiteral("http://localhost:5173/")).isEmpty());
-    QCOMPARE(svc.requests().at(4).toMap().value(QStringLiteral("url")).toString(),
-             QStringLiteral("http://localhost:5173/"));
-
-    // Round-trip: a fresh service over the same Settings sees every request.
+    // Round-trip: a fresh service over the same Settings sees every request
+    // (R3: imports persist; "+ New request"/"Open →" open drafts in the
+    // request page instead of saving, so there is nothing more to reload).
     ApiService reloaded(&settings);
     reloaded.ensureLoaded();
-    QCOMPARE(reloaded.requests().size(), 5);
+    QCOMPARE(reloaded.requests().size(), 3);
     QCOMPARE(reloaded.requests().at(0).toMap().value(QStringLiteral("url")).toString(),
              r.value(QStringLiteral("url")).toString());
 }
@@ -1494,6 +1483,208 @@ void QmlTests::test_api_history_clear()
     QCOMPARE(changed.count(), 1);
 }
 
+// R2: the request-page storage slice. Drafts are unsaved (id ""), the first
+// saveRequest() assigns the id and persists, an update keeps its position.
+void QmlTests::test_api_draft_save()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    Settings settings(tmp.path() + "/trun.ini");
+    ApiService svc(&settings);
+
+    // Draft factory: unsaved, design defaults, nothing persisted.
+    const QVariantMap draft = svc.makeDraft();
+    QVERIFY(draft.value(QStringLiteral("id")).toString().isEmpty());
+    QCOMPARE(draft.value(QStringLiteral("name")).toString(),
+             QStringLiteral("Untitled request"));
+    QCOMPARE(draft.value(QStringLiteral("method")).toString(), QStringLiteral("GET"));
+    QCOMPARE(draft.value(QStringLiteral("url")).toString(), QStringLiteral("{{baseUrl}}/"));
+    QCOMPARE(draft.value(QStringLiteral("headers")).toList().size(), 0);
+    QCOMPARE(draft.value(QStringLiteral("params")).toList().size(), 0);
+    QCOMPARE(draft.value(QStringLiteral("body")).toString(), QString());
+    QCOMPARE(draft.value(QStringLiteral("auth")).toMap().value(QStringLiteral("type")).toString(),
+             QStringLiteral("none"));
+    QCOMPARE(draft.value(QStringLiteral("lastStatus")).toInt(), 0);
+    QVERIFY(!draft.value(QStringLiteral("updatedAt")).toString().isEmpty());
+
+    // A running-server "Open →" pastes its URL into the same draft.
+    QCOMPARE(svc.makeDraft(QStringLiteral("http://localhost:5173/"))
+                 .value(QStringLiteral("url")).toString(),
+             QStringLiteral("http://localhost:5173/"));
+    QCOMPARE(svc.requests().size(), 0);
+
+    // Saving the draft assigns the id and persists the request.
+    svc.ensureLoaded(); // first, so the spy below only sees the save's emit
+    QSignalSpy created(&svc, &ApiService::requestsChanged);
+    QVariantMap toSave = draft;
+    toSave.insert(QStringLiteral("projectId"), QStringLiteral("p/one"));
+    const QString returned = svc.saveRequest(toSave);
+    QVERIFY(!returned.isEmpty());
+    QCOMPARE(svc.requests().size(), 1);
+    const QString id = svc.requests().at(0).toMap().value(QStringLiteral("id")).toString();
+    QVERIFY(!id.isEmpty());
+    QCOMPARE(returned, id);
+    QCOMPARE(svc.requests().at(0).toMap().value(QStringLiteral("projectId")).toString(),
+             QStringLiteral("p/one"));
+    QCOMPARE(created.count(), 1);
+
+    // Round-trip: a fresh service over the same Settings sees the request.
+    ApiService reloaded(&settings);
+    reloaded.ensureLoaded();
+    QCOMPARE(reloaded.requests().size(), 1);
+    QCOMPARE(reloaded.requests().at(0).toMap().value(QStringLiteral("id")).toString(), id);
+    QCOMPARE(reloaded.requests().at(0).toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("Untitled request"));
+    QCOMPARE(reloaded.requests().at(0).toMap().value(QStringLiteral("params")).toList().size(),
+             0);
+}
+
+// R2: Save on an existing request = update (rename + edited fields) — the same
+// row, in place, never a duplicate; unknown ids are reported and ignored.
+void QmlTests::test_api_save_request_update()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    Settings settings(tmp.path() + "/trun.ini");
+    ApiService svc(&settings);
+
+    QVariantMap r = svc.makeDraft();
+    r.insert(QStringLiteral("params"),
+             QVariantList{QVariantMap{{QStringLiteral("name"), QStringLiteral("include")},
+                                      {QStringLiteral("value"), QStringLiteral("stats")},
+                                      {QStringLiteral("enabled"), true}}});
+    QVERIFY(!svc.saveRequest(r).isEmpty());
+    const QString id = svc.requests().at(0).toMap().value(QStringLiteral("id")).toString();
+    QVERIFY(!id.isEmpty());
+
+    // Inline rename + edited params: same id, still one row.
+    QVariantMap edited = svc.requests().at(0).toMap();
+    edited.insert(QStringLiteral("name"), QStringLiteral("List campaigns"));
+    QVERIFY(!svc.saveRequest(edited).isEmpty());
+    QCOMPARE(svc.requests().size(), 1);
+    QCOMPARE(svc.requests().at(0).toMap().value(QStringLiteral("id")).toString(), id);
+    QCOMPARE(svc.requests().at(0).toMap().value(QStringLiteral("name")).toString(),
+             QStringLiteral("List campaigns"));
+    QCOMPARE(svc.requests().at(0).toMap().value(QStringLiteral("params")).toList().size(), 1);
+
+    // An unknown non-empty id is reported and changes nothing.
+    QSignalSpy errors(&svc, &ApiService::errorMessage);
+    QVariantMap ghost = svc.makeDraft();
+    ghost.insert(QStringLiteral("id"), QStringLiteral("nope"));
+    QVERIFY(svc.saveRequest(ghost).isEmpty());
+    QCOMPARE(errors.count(), 1);
+    QCOMPARE(svc.requests().size(), 1);
+
+    // An incomplete map (no url) is rejected too.
+    QVariantMap broken{{QStringLiteral("method"), QStringLiteral("GET")}};
+    QVERIFY(svc.saveRequest(broken).isEmpty());
+    QCOMPARE(errors.count(), 2);
+}
+
+// R2: Send stamps lastStatus/lastAt/updatedAt on the stored request only;
+// drafts and unknown ids are silent no-ops.
+void QmlTests::test_api_update_request_status()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    Settings settings(tmp.path() + "/trun.ini");
+    ApiService svc(&settings);
+
+    QVERIFY(!svc.saveRequest(svc.makeDraft()).isEmpty());
+    const QString id = svc.requests().at(0).toMap().value(QStringLiteral("id")).toString();
+    QCOMPARE(svc.requests().at(0).toMap().value(QStringLiteral("lastStatus")).toInt(), 0);
+    QVERIFY(svc.requests().at(0).toMap().value(QStringLiteral("lastAt")).toString().isEmpty());
+
+    QVERIFY(svc.updateRequestStatus(id, 404));
+    QCOMPARE(svc.requests().at(0).toMap().value(QStringLiteral("lastStatus")).toInt(), 404);
+    QVERIFY(!svc.requests().at(0).toMap().value(QStringLiteral("lastAt")).toString().isEmpty());
+    QVERIFY(!svc.requests().at(0).toMap().value(QStringLiteral("updatedAt")).toString().isEmpty());
+
+    // Drafts ("") and unknown ids: no error, nothing stored.
+    QSignalSpy errors(&svc, &ApiService::errorMessage);
+    QVERIFY(!svc.updateRequestStatus(QString(), 200));
+    QVERIFY(!svc.updateRequestStatus(QStringLiteral("missing"), 200));
+    QCOMPARE(errors.count(), 0);
+
+    // Round-trip keeps the stamp.
+    ApiService reloaded(&settings);
+    reloaded.ensureLoaded();
+    QCOMPARE(reloaded.requests().at(0).toMap().value(QStringLiteral("lastStatus")).toInt(),
+             404);
+}
+
+// R2: the history writer — prepend (newest on top), `at` stamped when absent,
+// cap 50 with the oldest dropped at the end.
+void QmlTests::test_api_append_history()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    Settings settings(tmp.path() + "/trun.ini");
+    ApiService svc(&settings);
+
+    QVariantMap first{{QStringLiteral("method"), QStringLiteral("GET")},
+                      {QStringLiteral("url"), QStringLiteral("http://localhost:8000/a")},
+                      {QStringLiteral("status"), 200}};
+    svc.appendHistory(first);
+    QCOMPARE(svc.history().size(), 1);
+    // `at` is stamped when absent, so the list can render "just now".
+    QVERIFY(!svc.history().at(0).toMap().value(QStringLiteral("at")).toString().isEmpty());
+
+    QVariantMap second{{QStringLiteral("method"), QStringLiteral("POST")},
+                       {QStringLiteral("url"), QStringLiteral("http://localhost:8000/b")},
+                       {QStringLiteral("status"), 401}};
+    svc.appendHistory(second);
+    // Newest first, as the design's history list.
+    QCOMPARE(svc.history().size(), 2);
+    QCOMPARE(svc.history().at(0).toMap().value(QStringLiteral("url")).toString(),
+             QStringLiteral("http://localhost:8000/b"));
+
+    // Cap 50: the oldest (the very first send) falls off the end.
+    for (int i = 2; i < 55; ++i) {
+        QVariantMap e{{QStringLiteral("method"), QStringLiteral("GET")},
+                      {QStringLiteral("url"),
+                       QStringLiteral("http://localhost:8000/u%1").arg(i)},
+                      {QStringLiteral("status"), 200}};
+        svc.appendHistory(e);
+    }
+    QCOMPARE(svc.history().size(), 50);
+    QCOMPARE(svc.history().at(0).toMap().value(QStringLiteral("url")).toString(),
+             QStringLiteral("http://localhost:8000/u54"));
+    bool firstSurvived = false;
+    for (const QVariant &h : svc.history()) {
+        if (h.toMap().value(QStringLiteral("url")).toString()
+            == QStringLiteral("http://localhost:8000/a"))
+            firstSurvived = true;
+    }
+    QVERIFY(!firstSurvived);
+
+    // Round-trip keeps the capped, newest-first list.
+    ApiService reloaded(&settings);
+    reloaded.ensureLoaded();
+    QCOMPARE(reloaded.history().size(), 50);
+    QCOMPARE(reloaded.history().at(0).toMap().value(QStringLiteral("url")).toString(),
+             QStringLiteral("http://localhost:8000/u54"));
+}
+
+// R2: the Save-dialog name suggestion "METHOD /path" (design's save()).
+void QmlTests::test_api_suggest_name()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    Settings settings(tmp.path() + "/trun.ini");
+    ApiService svc(&settings);
+
+    QCOMPARE(svc.suggestName(QStringLiteral("GET"),
+                             QStringLiteral("http://localhost:8000/api/campaigns")),
+             QStringLiteral("GET /api/campaigns"));
+    // A {{var}} origin is skipped like a real origin.
+    QCOMPARE(svc.suggestName(QStringLiteral("POST"), QStringLiteral("{{baseUrl}}/api/events")),
+             QStringLiteral("POST /api/events"));
+    // Root path: just the method and a slash.
+    QCOMPARE(svc.suggestName(QStringLiteral("GET"), QStringLiteral("http://localhost:8000/")),
+             QStringLiteral("GET /"));
+}
+
 // Fakes for the ApiPage list test: only the surfaces the page reads.
 class FakeApiService : public QObject {
     Q_OBJECT
@@ -1519,10 +1710,47 @@ public:
         emit activeEnvIdChanged();
         return true;
     }
-    Q_INVOKABLE QString newUntitled(const QString &url = QString())
+    Q_INVOKABLE QVariantMap makeDraft(const QString &url = QString())
     {
-        Q_UNUSED(url);
-        return QStringLiteral("new-id");
+        return QVariantMap{
+            {QStringLiteral("id"), QString()},
+            {QStringLiteral("name"), QStringLiteral("Untitled request")},
+            {QStringLiteral("method"), QStringLiteral("GET")},
+            {QStringLiteral("url"), url.isEmpty() ? QStringLiteral("{{baseUrl}}/") : url},
+            {QStringLiteral("projectId"), QString()},
+            {QStringLiteral("headers"), QVariantList{}},
+            {QStringLiteral("params"), QVariantList{}},
+            {QStringLiteral("body"), QString()},
+            {QStringLiteral("auth"),
+             QVariantMap{{QStringLiteral("type"), QStringLiteral("none")}}},
+            {QStringLiteral("lastStatus"), 0},
+            {QStringLiteral("lastAt"), QString()}};
+    }
+    Q_INVOKABLE QString saveRequest(const QVariantMap &request)
+    {
+        QVariantMap stored = request;
+        QString id = stored.value(QStringLiteral("id")).toString();
+        if (id.isEmpty()) {
+            id = QStringLiteral("fake-request-id");
+            stored.insert(QStringLiteral("id"), id);
+            m_requests.append(stored);
+        } else {
+            for (int i = 0; i < m_requests.size(); ++i) {
+                if (m_requests.at(i).toMap().value(QStringLiteral("id")).toString() == id)
+                    m_requests.replace(i, stored);
+            }
+        }
+        emit requestsChanged();
+        return id;
+    }
+    Q_INVOKABLE QString suggestName(const QString &method, const QString &url) const
+    {
+        QString path = url;
+        const int scheme = path.indexOf(QLatin1String("//"));
+        const int slash = path.indexOf(QLatin1Char('/'), scheme + 2);
+        if (slash >= 0)
+            path = path.mid(slash);
+        return method + QLatin1Char(' ') + path;
     }
     Q_INVOKABLE QString importCurl(const QString &command)
     {
@@ -1678,6 +1906,108 @@ void QmlTests::test_api_page_list_groups()
     page->setProperty("searchQuery", "");
     QTest::qWait(20);
     QCOMPARE(page->property("requestGroups").toList().size(), 2);
+
+    delete obj;
+}
+
+// R3: the request page is the list's second level. Drafts (new / Open → /
+// history), saved requests as detached clones, rename reaching the header
+// crumb, silent discard on close; the first Save binds the working map to
+// the persisted id.
+void QmlTests::test_api_page_open_request()
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("logModel", g_logModel);
+    const QString buildDir = QDir::currentPath();
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(buildDir + "/icons/").toString());
+
+    FakeApiService api;
+    const QVariantMap campaign{
+        {QStringLiteral("id"), QStringLiteral("1")},
+        {QStringLiteral("name"), QStringLiteral("Get campaign")},
+        {QStringLiteral("method"), QStringLiteral("GET")},
+        {QStringLiteral("url"), QStringLiteral("{{baseUrl}}/api/campaigns")},
+        {QStringLiteral("projectId"), QStringLiteral("p/one")},
+        {QStringLiteral("lastStatus"), 200},
+        {QStringLiteral("lastAt"), QStringLiteral("2026-10-06T12:00:00Z")},
+        {QStringLiteral("headers"), QVariantList{}}};
+    api.setRequests(QVariantList{campaign});
+    engine.rootContext()->setContextProperty("apiService", &api);
+
+    FakeProjectServiceForApi proj;
+    proj.setProjects(QVariantList{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("p/one")},
+                    {QStringLiteral("name"), QStringLiteral("personizely-backend")}}});
+    engine.rootContext()->setContextProperty("projectService", &proj);
+
+    FakeDashboardForApi dash;
+    engine.rootContext()->setContextProperty("dashboard", &dash);
+
+    QQmlComponent component(&engine,
+        QUrl::fromLocalFile(sourceQmlPath("ApiPage.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+
+    QQuickItem host;
+    host.setWidth(900);
+    host.setHeight(700);
+    QObject *obj = component.createWithInitialProperties({}, engine.rootContext());
+    QVERIFY(obj != nullptr);
+    auto *page = qobject_cast<QQuickItem *>(obj);
+    QVERIFY(page != nullptr);
+    page->setParentItem(&host);
+    page->setWidth(900);
+    page->setHeight(700);
+    QTest::qWait(100);
+
+    QQuickItem *pane = page->findChild<QQuickItem *>(QStringLiteral("apiRequestPage"));
+    QVERIFY(pane != nullptr);
+
+    // "+ New request" / "Open →" open a fresh draft; the list hides.
+    QVERIFY(QMetaObject::invokeMethod(page, "openDraft",
+        Q_ARG(QVariant, QStringLiteral("http://localhost:5173/"))));
+    QVERIFY(page->property("requestOpen").toBool());
+    QCOMPARE(page->property("requestName").toString(),
+             QStringLiteral("Untitled request"));
+    QCOMPARE(pane->property("saved").toBool(), false);
+    QCOMPARE(pane->property("requestMap").toMap().value(QStringLiteral("url")).toString(),
+             QStringLiteral("http://localhost:5173/"));
+
+    // First Save persists the draft (appended after the seeded campaign) and
+    // adopts the returned id.
+    QVERIFY(QMetaObject::invokeMethod(pane, "doSave"));
+    QCOMPARE(pane->property("saved").toBool(), true);
+    QCOMPARE(api.requests().size(), 2);
+    QCOMPARE(pane->property("requestMap").toMap().value(QStringLiteral("id")).toString(),
+             api.requests().at(1).toMap().value(QStringLiteral("id")).toString());
+
+    // A list row opens the saved request as an editable, detached copy.
+    QVERIFY(QMetaObject::invokeMethod(page, "openSavedRequest",
+        Q_ARG(QVariant, QVariant(campaign))));
+    QVERIFY(page->property("requestOpen").toBool());
+    QCOMPARE(page->property("requestName").toString(), QStringLiteral("Get campaign"));
+    QCOMPARE(pane->property("saved").toBool(), true);
+    QCOMPARE(pane->property("requestMap").toMap().value(QStringLiteral("id")).toString(),
+             QStringLiteral("1"));
+
+    // A history entry reopens as a draft carrying method + url.
+    const QVariantMap entry{
+        {QStringLiteral("method"), QStringLiteral("POST")},
+        {QStringLiteral("url"), QStringLiteral("http://localhost:8000/events")},
+        {QStringLiteral("status"), 401},
+        {QStringLiteral("at"), QStringLiteral("2026-10-06T12:05:00Z")}};
+    QVERIFY(QMetaObject::invokeMethod(page, "openHistoryEntry", Q_ARG(QVariant, QVariant(entry))));
+    const QVariantMap replayed = pane->property("requestMap").toMap();
+    QCOMPARE(replayed.value(QStringLiteral("method")).toString(), QStringLiteral("POST"));
+    QCOMPARE(replayed.value(QStringLiteral("url")).toString(),
+             QStringLiteral("http://localhost:8000/events"));
+    QCOMPARE(pane->property("saved").toBool(), false);
+
+    // Close discards silently (draft stays persisted only after Save).
+    QVERIFY(QMetaObject::invokeMethod(page, "closeRequest"));
+    QVERIFY(!page->property("requestOpen").toBool());
+    QCOMPARE(page->property("requestName").toString(), QString());
 
     delete obj;
 }

@@ -2,13 +2,19 @@ import QtQuick
 import QtQuick.Controls
 import "../"
 
-// UiInput — text field styled after Nuxt UI Input (size md, variant
-// outline): bg-default, inset-ring, rounded-md, dimmed placeholder;
-// the focus ring is painted in accent. The px-2.5/py-1.5 paddings are
-// specific to this component (there is no step for them in Theme).
+// UiInput — text field styled after Nuxt UI Input (size md): bg-default,
+// inset-ring, rounded-md, dimmed placeholder; the focus ring is painted in
+// accent. Variants follow /tmp/nuxt-ui/src/theme/input.ts:
+//   outline — default, the field look (bg-default + ring + hover nothing)
+//   ghost   — bg-transparent, hover/focus bg-elevated + focus ring (an
+//             editable-label affordance without a frame)
+//   none    — fully bare, no bg, no ring (focus:outline-none)
+// The px-2.5/py-1.5 paddings are specific to this component (there is no step
+// for them in Theme).
 TextField {
     id: root
 
+    property string variant: "outline" // outline | ghost | none
     property string leadingIconSource: ""
     property string trailingIconSource: ""
 
@@ -32,7 +38,8 @@ TextField {
 
     background: Item {
         // Focus ring: a barely visible outer ring (accent/25, matching
-        // outline-{color}/25 in Nuxt), shown only while focused.
+        // outline-{color}/25 in Nuxt), shown only while focused. The "none"
+        // variant is fully bare (focus:outline-none in input.ts).
         Rectangle {
             anchors.fill: parent
             anchors.margins: -3
@@ -41,15 +48,22 @@ TextField {
             border.color: Qt.rgba(Theme.accent.r, Theme.accent.g,
                                   Theme.accent.b, 0.25)
             border.width: 2
-            visible: root.activeFocus
+            visible: root.variant !== "none" && root.activeFocus
         }
 
+        // Body: outline = the field look (bg-default + ring). ghost =
+        // bg-transparent with hover/focus bg-elevated (Nuxt's
+        // "bg-transparent hover:bg-elevated focus:bg-elevated").
         Rectangle {
             anchors.fill: parent
             radius: Theme.radiusSm
-            color: Theme.windowBackground
-            border.color: root.activeFocus ? Theme.accent : Theme.border
-            border.width: 1
+            color: root.variant === "outline" ? Theme.windowBackground
+                 : (root.variant === "ghost" && (root.hovered || root.activeFocus)
+                     ? Theme.mutedSurface : "transparent")
+            border.color: root.variant === "outline"
+                ? (root.activeFocus ? Theme.accent : Theme.border)
+                : "transparent"
+            border.width: root.variant === "outline" ? 1 : 0
         }
     }
 

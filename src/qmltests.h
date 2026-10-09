@@ -48,6 +48,12 @@ private slots:
     void test_run_all_recent();
     void test_api_import_curl();
     void test_api_history_clear();
+    void test_api_draft_save();
+    void test_api_save_request_update();
+    void test_api_update_request_status();
+    void test_api_append_history();
+    void test_api_suggest_name();
     void test_api_page_list_groups();
+    void test_api_page_open_request();
     void test_ui_list_element_click_through();
 };

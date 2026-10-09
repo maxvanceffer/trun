@@ -18,6 +18,7 @@ const QString kEnvsKey = QStringLiteral("api/envs");
 const QString kActiveKey = QStringLiteral("api/activeEnv");
 const QString kRequestsKey = QStringLiteral("api/requests");
 const QString kHistoryKey = QStringLiteral("api/history");
+const int kHistoryCap = 50;
 
 // Stored var shape: {name, value, secret, enabled, hasSavedValue}.
 // On macOS secret values never reach Settings (value is "").
@@ -410,6 +411,13 @@ void ApiService::loadRequests()
         QVariantMap request = o.toVariantMap();
         if (!request.contains(QStringLiteral("headers")))
             request.insert(QStringLiteral("headers"), QVariantList{});
+        if (!request.contains(QStringLiteral("params")))
+            request.insert(QStringLiteral("params"), QVariantList{});
+        if (!request.contains(QStringLiteral("body")))
+            request.insert(QStringLiteral("body"), QString());
+        if (!request.contains(QStringLiteral("auth")))
+            request.insert(QStringLiteral("auth"),
+                           QVariantMap{{QStringLiteral("type"), QStringLiteral("none")}});
         m_requests.append(request);
     }
 }
@@ -460,16 +468,97 @@ bool ApiService::clearHistory()
     return true;
 }
 
-QVariantMap ApiService::makeRequest(const QString &name, const QString &method,
-                                    const QString &url)
+// ─── Request page storage (R2) ────────────────────────────────────────────
+
+QString ApiService::saveRequest(const QVariantMap &request)
 {
+    ensureLoaded();
+    if (!m_settings) {
+        emit errorMessage(tr("Settings unavailable"));
+        return {};
+    }
+    if (!request.contains(QStringLiteral("method"))
+        || !request.contains(QStringLiteral("url"))) {
+        emit errorMessage(tr("Cannot save an incomplete request"));
+        return {};
+    }
+
+    QVariantMap stored = request;
+    const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    stored.insert(QStringLiteral("updatedAt"), now);
+
+    const QString id = stored.value(QStringLiteral("id")).toString();
+    if (id.isEmpty()) {
+        // Create: assign the id here, append to the collection.
+        stored.insert(QStringLiteral("id"), newId());
+        m_requests.append(stored);
+    } else {
+        // Update: replace in place — position kept, no duplicate row.
+        const int i = indexOf(m_requests, id);
+        if (i < 0) {
+            emit errorMessage(tr("Request not found"));
+            return {};
+        }
+        m_requests.replace(i, stored);
+    }
+    persistRequests();
+    emit requestsChanged();
+    return stored.value(QStringLiteral("id")).toString();
+}
+
+bool ApiService::updateRequestStatus(const QString &id, int status)
+{
+    ensureLoaded();
+    if (id.isEmpty())
+        return false;
+    const int i = indexOf(m_requests, id);
+    if (i < 0)
+        return false; // drafts are never stored requests — no error, they just
+                      // skip the status stamp and only write history.
+    QVariantMap request = m_requests.at(i).toMap();
+    const QString now = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    request.insert(QStringLiteral("lastStatus"), status);
+    request.insert(QStringLiteral("lastAt"), now);
+    request.insert(QStringLiteral("updatedAt"), now);
+    m_requests.replace(i, request);
+    persistRequests();
+    emit requestsChanged();
+    return true;
+}
+
+void ApiService::appendHistory(const QVariantMap &entry)
+{
+    ensureLoaded();
+    QVariantMap item = entry;
+    if (item.value(QStringLiteral("at")).toString().isEmpty())
+        item.insert(QStringLiteral("at"),
+                    QDateTime::currentDateTimeUtc().toString(Qt::ISODate));
+    m_history.prepend(item);
+    while (m_history.size() > kHistoryCap)
+        m_history.removeLast();
+    persistHistory();
+    emit historyChanged();
+}
+
+QString ApiService::suggestName(const QString &method, const QString &url) const
+{
+    return suggestRequestName(method, url);
+}
+
+QVariantMap makeDraftImpl(const QString &url)
+{
+    // The request page's draft: same shape as a saved request, but id stays
+    // empty (unsaved) until the first saveRequest(). url is raw — {{var}} is
+    // kept verbatim and resolved at send time.
     return QVariantMap{
-        {QStringLiteral("id"), newId()},
-        {QStringLiteral("name"), name},
-        {QStringLiteral("method"), method},
-        {QStringLiteral("url"), url},
+        {QStringLiteral("id"), QString()},
+        {QStringLiteral("name"), QStringLiteral("Untitled request")},
+        {QStringLiteral("method"), QStringLiteral("GET")},
+        {QStringLiteral("url"), url.isEmpty() ? QStringLiteral("{{baseUrl}}/")
+                                              : url},
         {QStringLiteral("projectId"), QString()},
         {QStringLiteral("headers"), QVariantList{}},
+        {QStringLiteral("params"), QVariantList{}},
         {QStringLiteral("body"), QString()},
         {QStringLiteral("auth"),
          QVariantMap{{QStringLiteral("type"), QStringLiteral("none")}}},
@@ -478,6 +567,21 @@ QVariantMap ApiService::makeRequest(const QString &name, const QString &method,
         {QStringLiteral("updatedAt"),
          QDateTime::currentDateTimeUtc().toString(Qt::ISODate)},
     };
+}
+
+QVariantMap ApiService::makeDraft(const QString &url) const
+{
+    return makeDraftImpl(url);
+}
+
+QVariantMap ApiService::makeRequest(const QString &name, const QString &method,
+                                    const QString &url)
+{
+    QVariantMap request = makeDraftImpl(url);
+    request.insert(QStringLiteral("id"), newId());
+    request.insert(QStringLiteral("name"), name);
+    request.insert(QStringLiteral("method"), method);
+    return request;
 }
 
 QString ApiService::addRequest(const QVariantMap &request)
@@ -490,16 +594,6 @@ QString ApiService::addRequest(const QVariantMap &request)
     persistRequests();
     emit requestsChanged();
     return id;
-}
-
-QString ApiService::newUntitled(const QString &url)
-{
-    // Design: "+ New request" opens an empty one named "Untitled request";
-    // a running-server "Open →" reuses the same draft with that URL pasted in.
-    return addRequest(makeRequest(QStringLiteral("Untitled request"),
-                                  QStringLiteral("GET"),
-                                  url.isEmpty() ? QStringLiteral("{{baseUrl}}/")
-                                                : url));
 }
 
 QString ApiService::importCurl(const QString &command)

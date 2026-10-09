@@ -22,6 +22,7 @@ Keychain (`src/mackeychain.h`, label like `trun.db.*` in
   "url": "{{baseUrl}}/api/campaigns/{{campaignId}}",
   "projectId": "<folder>/<manifest> (trun Project id)",
   "headers": [{"name": "", "value": "", "enabled": true}],
+  "params": [{"name": "", "value": "", "enabled": true}],
   "body": "",
   "auth": {"type": "none"},
   "lastStatus": 200,
@@ -30,10 +31,14 @@ Keychain (`src/mackeychain.h`, label like `trun.db.*` in
 }
 ```
 
-- `headers/body/auth` — reserved for the request page (out of scope); the T6 cURL
-  parser already writes them, there is no UI yet.
-- `lastStatus/lastAt` — the source of the status/time in the list row (closes the
-  "Not yet specified" question: no join with history is needed).
+- `headers/body/auth/params` — the request page's editors (second map); the T6
+  cURL parser already writes headers/body/auth, `params` lands in R2. The mock's
+  JS tuples (`['include','stats',true]`) are not the persisted format — the
+  stored shape is the same map as headers.
+- `lastStatus/lastAt` — the source of the status/time in the list row (no join
+  with history). Send stamps them on the stored request immediately (R2
+  decision: the list shows the last execution even before Save); content edits
+  persist only on Save.
 - `method` — uppercase; `url` — raw, with `{{var}}` as is.
 
 ## Environment (global, one active)
@@ -67,8 +72,10 @@ Keychain (`src/mackeychain.h`, label like `trun.db.*` in
 
 - Persisted in Settings (needed for "2m ago" after a restart).
 - Reader + `clearHistory()` are done in T4 (the list reads history and clears it).
-- Writer `appendHistory()` — a stub in the future ApiService; the real Send (second
-  page) will write it later.
+- Writer `appendHistory()` (R2): prepends (newest on top, as the design), stamps
+  `at` when absent, trims to cap 50 (oldest at the end), persists. `url` is the
+  **resolved** URL — what was actually sent — so history rows and replay repeat
+  the real network call (decided in the request-page map).
 
 ## ID and time
 

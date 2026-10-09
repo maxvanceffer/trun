@@ -105,13 +105,44 @@ Item {
     // Set by Dashboard: future polls load only while the page is visible.
     property bool pageActive: false
 
-    // "+ New request" and a running-server "Open →" both open the Untitled
-    // draft. The second page does not exist yet (T6: model + stub only), so
-    // nothing is navigated to — the list replacing this column is the proof.
-    function createRequest(url) {
-        if (svc)
-            return svc.newUntitled(url || "")
-        return ""
+    // Second level: the open request page. requestMap is the working copy —
+    // a draft (makeDraft) or a detached clone of a saved request — shared by
+    // reference with the request pane; null means the list is showing.
+    property var requestMap: null
+    readonly property bool requestOpen: apiPage.requestMap !== null
+    // The header's 3rd crumb follows renames live (mutating a field of a QML
+    // var does not re-evaluate a binding on requestMap).
+    property string requestName: ""
+
+    // "+ New request" and a running-server "Open →" open the request page
+    // with a fresh draft; nothing is persisted until Save (T4's newUntitled
+    // is gone). History cards reopen their entry as a draft too.
+    function openDraft(url) {
+        if (!svc)
+            return
+        requestMap = svc.makeDraft(url || "")
+        requestPane.openWith(requestMap, false)
+    }
+
+    function openSavedRequest(map) {
+        // Detach: the C++ list must not see edits until Save.
+        requestMap = JSON.parse(JSON.stringify(map))
+        requestPane.openWith(requestMap, true)
+    }
+
+    function openHistoryEntry(entry) {
+        if (!svc)
+            return
+        requestMap = svc.makeDraft(entry.url || "")
+        requestMap.method = entry.method || "GET"
+        requestPane.openWith(requestMap, false)
+    }
+
+    // Leaving the request page discards unsaved edits (decided; no prompt).
+    function closeRequest() {
+        requestPane.openWith(null, false)
+        requestMap = null
+        requestName = ""
     }
 
     function importFromCurl() {
@@ -202,15 +233,45 @@ Item {
         }
     }
 
+    Connections {
+        target: requestPane
+        function onRenameOccurred() {
+            apiPage.requestName = apiPage.requestMap
+                ? (apiPage.requestMap.name || "") : ""
+        }
+    }
+
     Component.onCompleted: {
         if (apiPage.svc)
             apiPage.svc.ensureLoaded()
         envSwitch.currentIndex = apiPage.activeEnvIndex()
     }
 
+    // Manual two-level slide (no StackLayout), DatabasesPage pattern: the
+    // list column slides out, the request page slides in from the right.
+    // Esc pops back while a request is open (the header crumb is the mouse
+    // path back).
+    Keys.onPressed: function(event) {
+        if (event.key === Qt.Key_Escape && apiPage.requestOpen) {
+            event.accepted = true
+            apiPage.closeRequest()
+        }
+    }
+
     ColumnLayout {
-        anchors.fill: parent
-        anchors.margins: Theme.spacingLg
+        // The column animates by x/opacity instead of anchors.fill so the
+        // slide needs no extra wrapper (margins baked into the geometry).
+        width: parent.width - 2 * Theme.spacingLg
+        height: parent.height - 2 * Theme.spacingLg
+        x: (apiPage.requestOpen ? -parent.width : 0) + Theme.spacingLg
+        opacity: apiPage.requestOpen ? 0 : 1
+        visible: opacity > 0
+        Behavior on x {
+            NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard }
+        }
+        Behavior on opacity {
+            NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard }
+        }
         spacing: Theme.spacingLg
 
         // Top row: search + the two entry points. Shown on both the list and
@@ -246,7 +307,7 @@ Item {
                 color: "primary"
                 variant: "solid"
                 size: "sm"
-                onClicked: apiPage.createRequest("")
+                onClicked: apiPage.openDraft("")
             }
         }
 
@@ -368,7 +429,7 @@ Item {
                                 color: "primary"
                                 variant: "solid"
                                 size: "sm"
-                                onClicked: apiPage.createRequest("")
+                                onClicked: apiPage.openDraft("")
                             }
 
                             UiButton {
@@ -482,7 +543,7 @@ Item {
                                             }
 
                                             TapHandler {
-                                                onTapped: apiPage.createRequest(serverRow.modelData.url)
+                                                onTapped: apiPage.openDraft(serverRow.modelData.url)
                                             }
                                         }
                                     }
@@ -557,7 +618,8 @@ Item {
 
                                         width: parent.width
                                         implicitHeight: reqRowLayout.implicitHeight + 2 * Theme.spacingMd
-                                        clickable: false
+                                        clickable: true
+                                        onClicked: apiPage.openSavedRequest(reqCard.modelData)
 
                                         RowLayout {
                                             id: reqRowLayout
@@ -687,7 +749,8 @@ Item {
 
                                     width: parent.width
                                     implicitHeight: histRowLayout.implicitHeight + 2 * Theme.spacingSm
-                                    clickable: false
+                                    clickable: true
+                                    onClicked: apiPage.openHistoryEntry(histCard.modelData)
 
                                     RowLayout {
                                         id: histRowLayout
@@ -877,6 +940,23 @@ Item {
                     }
                 }
             }
+        }
+    }
+
+    // Request page (second level). Slides in while a request is open; the
+    // working copy lives in apiPage.requestMap and is shared by reference.
+    ApiRequestPage {
+        id: requestPane
+        width: parent.width
+        height: parent.height
+        x: apiPage.requestOpen ? 0 : parent.width
+        opacity: apiPage.requestOpen ? 1 : 0
+        visible: opacity > 0
+        Behavior on x {
+            NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard }
+        }
+        Behavior on opacity {
+            NumberAnimation { duration: Theme.animSlide; easing.type: Theme.easingStandard }
         }
     }
 

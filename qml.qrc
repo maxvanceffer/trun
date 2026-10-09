@@ -28,6 +28,7 @@
         <file>qml/ConnectionDialog.qml</file>
         <file>qml/DockerPage.qml</file>
         <file>qml/ApiPage.qml</file>
+        <file>qml/ApiRequestPage.qml</file>
         <file>qml/EnvironmentsDialog.qml</file>
         <file>qml/BusyLabel.qml</file>
         <file>qml/Spinner.qml</file>

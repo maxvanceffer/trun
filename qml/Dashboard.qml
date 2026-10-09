@@ -936,10 +936,37 @@ Rectangle {
                 }
 
                 Label {
+                    id: crumbApiLabel
                     visible: dashboard.activePage === "api"
                     text: qsTr("API")
+                    color: dashboard.activePage === "api" && apiPage.requestOpen
+                        ? Theme.textMuted : Theme.textPrimary
+                    font.pixelSize: Theme.fontSizeLg
+
+                    MouseArea {
+                        anchors.fill: parent
+                        visible: apiPage.requestOpen
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: apiPage.closeRequest()
+                    }
+                }
+
+                // Open-request crumb: the request page is one level deeper
+                // than `activePage` (same as DatabasesPage's selected
+                // service), so it gets its own conditional segment.
+                Label {
+                    visible: dashboard.activePage === "api" && apiPage.requestOpen
+                    text: "/"
+                    color: Theme.textMuted
+                    font.pixelSize: Theme.fontSizeLg
+                }
+
+                Label {
+                    visible: dashboard.activePage === "api" && apiPage.requestOpen
+                    text: apiPage.requestName
                     color: Theme.textPrimary
                     font.pixelSize: Theme.fontSizeLg
+                    elide: Text.ElideRight
                 }
 
                 // Folder crumbs (folder page and detail alike). Segments
