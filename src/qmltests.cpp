@@ -2299,6 +2299,364 @@ void QmlTests::test_api_request_urlbar()
     delete obj;
 }
 
+// TEMP diagnostic: ApiRequestPage loaded directly (no ApiPage host).
+// R5: the tab panel, driven at page level. The harness window never renders
+// frames, so delegate-model incubation stalls and Repeater delegate items
+// (a KV row's inputs) never appear — the urlbar test stays page-level items
+// for the same reason. UiTabs' objectNames plus the page's functions and
+// properties cover the whole panel without delegate items: add/remove rows,
+// per-tab badge counts, KV row content (kvParamSet/Toggle/Remove), enabled
+// params appending to the "→ resolved" line, Body/Auth modes writing
+// requestMap.body/.auth, and syncToRequestMap committing rows on save.
+// Delegate rendering itself is verified live in the app (standalone repros
+// with the real kit host the same layout fine).
+void QmlTests::test_api_request_tabs()
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("logModel", g_logModel);
+    const QString buildDir = QDir::currentPath();
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(buildDir + "/icons/").toString());
+
+    FakeApiService api;
+    api.setEnvironments(QVariantList{
+        QVariantMap{
+            {QStringLiteral("id"), QStringLiteral("local")},
+            {QStringLiteral("name"), QStringLiteral("local")},
+            {QStringLiteral("vars"), QVariantList{
+                QVariantMap{
+                    {QStringLiteral("name"), QStringLiteral("baseUrl")},
+                    {QStringLiteral("value"), QStringLiteral("http://localhost:8000")},
+                    {QStringLiteral("secret"), false},
+                },
+            }},
+        },
+    });
+    api.setActiveEnvId(QStringLiteral("local"));
+    engine.rootContext()->setContextProperty("apiService", &api);
+
+    FakeProjectServiceForApi proj;
+    proj.setProjects(QVariantList{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("p/one")},
+                    {QStringLiteral("name"), QStringLiteral("personizely-backend")}}});
+    engine.rootContext()->setContextProperty("projectService", &proj);
+
+    FakeDashboardForApi dash;
+    engine.rootContext()->setContextProperty("dashboard", &dash);
+
+    QQmlComponent component(&engine,
+        QUrl::fromLocalFile(sourceQmlPath("ApiPage.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+
+    QQuickWindow window;
+    window.resize(1000, 800);
+    QObject *obj = component.createWithInitialProperties({}, engine.rootContext());
+    QVERIFY(obj != nullptr);
+    auto *page = qobject_cast<QQuickItem *>(obj);
+    QVERIFY(page != nullptr);
+    page->setParentItem(window.contentItem());
+    page->setPosition(QPointF(0, 0));
+    page->setSize(QSizeF(1000, 800));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTest::qWait(50);
+
+    QVERIFY(QMetaObject::invokeMethod(page, "openDraft",
+        Q_ARG(QVariant, QStringLiteral("{{baseUrl}}/api/campaigns"))));
+    QVERIFY(page->property("requestOpen").toBool());
+    // The request column slides in (animSlide, visible: opacity > 0) — the
+    // panel settles before the test drives it.
+    QTest::qWait(600);
+
+    QQuickItem *pane = page->findChild<QQuickItem *>(QStringLiteral("apiRequestPage"));
+    QVERIFY(pane != nullptr);
+    QQuickItem *tabs = pane->findChild<QQuickItem *>(QStringLiteral("apiTabs"));
+    QVERIFY(tabs != nullptr);
+    QQuickItem *resolved = pane->findChild<QQuickItem *>(QStringLiteral("apiResolvedLine"));
+    QVERIFY(resolved != nullptr);
+    QQuickItem *addParam = pane->findChild<QQuickItem *>(QStringLiteral("apiAddParam"));
+    QVERIFY(addParam != nullptr);
+
+    // Fresh draft: Params active, four tabs, no counts; modes reset to
+    // "none" (the schema stores body text and auth fields, not the mode).
+    QCOMPARE(tabs->property("currentIndex").toInt(), 0);
+    QCOMPARE(pane->property("tabIndex").toInt(), 0);
+    QCOMPARE(pane->property("bodyMode").toString(), QStringLiteral("none"));
+    QCOMPARE(pane->property("authType").toString(), QStringLiteral("none"));
+    QCOMPARE(resolved->property("text").toString(),
+             QStringLiteral("→ http://localhost:8000/api/campaigns"));
+    QVariantList items = tabs->property("items").toList();
+    QCOMPARE(items.size(), 4);
+    QCOMPARE(items.at(0).toMap().value("badge").toInt(), 0);
+    QCOMPARE(items.at(1).toMap().value("badge").toInt(), 0);
+
+    // "+ Add param" (the page-level dashed pill): one row, badge follows.
+    QVERIFY(QMetaObject::invokeMethod(addParam, "clicked"));
+    QTest::qWait(20);
+    items = tabs->property("items").toList();
+    QCOMPARE(items.at(0).toMap().value("badge").toInt(), 1);
+    QCOMPARE(pane->property("paramRows").toList().size(), 1);
+
+    // Key/value edits land in the row and pull the resolved line's query —
+    // kvParamSet is the exact handler the row inputs' onTextEdited calls.
+    QVERIFY(QMetaObject::invokeMethod(pane, "kvParamSet",
+        Q_ARG(QVariant, 0), Q_ARG(QVariant, QStringLiteral("name")),
+        Q_ARG(QVariant, QStringLiteral("page"))));
+    QVERIFY(QMetaObject::invokeMethod(pane, "kvParamSet",
+        Q_ARG(QVariant, 0), Q_ARG(QVariant, QStringLiteral("value")),
+        Q_ARG(QVariant, QStringLiteral("2"))));
+    QTest::qWait(20);
+    QVariantList prows = pane->property("paramRows").toList();
+    QCOMPARE(prows.size(), 1);
+    QCOMPARE(prows.at(0).toMap().value("name").toString(), QStringLiteral("page"));
+    QCOMPARE(prows.at(0).toMap().value("value").toString(), QStringLiteral("2"));
+    QCOMPARE(resolved->property("text").toString(),
+             QStringLiteral("→ http://localhost:8000/api/campaigns?page=2"));
+
+    // The enabled toggle re-reads its state on save; disabled rows leave the
+    // preview, enabled ones come back (the badge count is unaffected).
+    QVERIFY(QMetaObject::invokeMethod(pane, "kvParamToggle",
+        Q_ARG(QVariant, 0), Q_ARG(QVariant, false)));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("paramRows").toList().at(0).toMap()
+                 .value("enabled").toBool(), false);
+    QCOMPARE(resolved->property("text").toString(),
+             QStringLiteral("→ http://localhost:8000/api/campaigns"));
+    QVERIFY(QMetaObject::invokeMethod(pane, "kvParamToggle",
+        Q_ARG(QVariant, 0), Q_ARG(QVariant, true)));
+    QTest::qWait(20);
+    QCOMPARE(resolved->property("text").toString(),
+             QStringLiteral("→ http://localhost:8000/api/campaigns?page=2"));
+
+    // A second row, then remove it with the ✕ handler; only the first stays.
+    QVERIFY(QMetaObject::invokeMethod(addParam, "clicked"));
+    QTest::qWait(20);
+    items = tabs->property("items").toList();
+    QCOMPARE(items.at(0).toMap().value("badge").toInt(), 2);
+    QVERIFY(QMetaObject::invokeMethod(pane, "kvRemoveParam", Q_ARG(QVariant, 1)));
+    QTest::qWait(20);
+    items = tabs->property("items").toList();
+    QCOMPARE(items.at(0).toMap().value("badge").toInt(), 1);
+    QCOMPARE(resolved->property("text").toString(),
+             QStringLiteral("→ http://localhost:8000/api/campaigns?page=2"));
+
+    // Headers tab: the same editor on its own rows; panels swap visibility.
+    QVERIFY(QMetaObject::invokeMethod(tabs, "activated", Q_ARG(int, 1)));
+    QTest::qWait(20);
+    QCOMPARE(tabs->property("currentIndex").toInt(), 1);
+    QCOMPARE(pane->property("tabIndex").toInt(), 1);
+    QQuickItem *paramsPanel = pane->findChild<QQuickItem *>(QStringLiteral("apiParamsPanel"));
+    QQuickItem *headersPanel = pane->findChild<QQuickItem *>(QStringLiteral("apiHeadersPanel"));
+    QVERIFY(paramsPanel != nullptr);
+    QVERIFY(headersPanel != nullptr);
+    QCOMPARE(paramsPanel->property("visible").toBool(), false);
+    QCOMPARE(headersPanel->property("visible").toBool(), true);
+
+    QQuickItem *addHeader = pane->findChild<QQuickItem *>(QStringLiteral("apiAddHeader"));
+    QVERIFY(addHeader != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(addHeader, "clicked"));
+    QTest::qWait(20);
+    items = tabs->property("items").toList();
+    QCOMPARE(items.at(1).toMap().value("badge").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(pane, "kvHeaderSet",
+        Q_ARG(QVariant, 0), Q_ARG(QVariant, QStringLiteral("name")),
+        Q_ARG(QVariant, QStringLiteral("Authorization"))));
+    QVERIFY(QMetaObject::invokeMethod(pane, "kvHeaderSet",
+        Q_ARG(QVariant, 0), Q_ARG(QVariant, QStringLiteral("value")),
+        Q_ARG(QVariant, QStringLiteral("Bearer q"))));
+    QTest::qWait(20);
+    QVariantMap h0 = pane->property("headerRows").toList().at(0).toMap();
+    QCOMPARE(h0.value(QStringLiteral("name")).toString(), QStringLiteral("Authorization"));
+    QCOMPARE(h0.value(QStringLiteral("value")).toString(), QStringLiteral("Bearer q"));
+
+    // Body tab: JSON mode bares the mono textarea; the text commits into
+    // requestMap.body via textChanged (TextArea has no textEdited signal).
+    QVERIFY(QMetaObject::invokeMethod(tabs, "activated", Q_ARG(int, 2)));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("tabIndex").toInt(), 2);
+    QQuickItem *bodyMode = pane->findChild<QQuickItem *>(QStringLiteral("apiBodyMode"));
+    QVERIFY(bodyMode != nullptr);
+    QCOMPARE(bodyMode->property("currentIndex").toInt(), 0); // none initially
+    QVERIFY(QMetaObject::invokeMethod(pane, "selectBodyMode", Q_ARG(QVariant, 1)));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("bodyMode").toString(), QStringLiteral("json"));
+    QCOMPARE(bodyMode->property("currentIndex").toInt(), 1);
+    QQuickItem *bodyArea = pane->findChild<QQuickItem *>(QStringLiteral("apiBodyArea"));
+    QVERIFY(bodyArea != nullptr);
+    QCOMPARE(bodyArea->property("visible").toBool(), true);
+    bodyArea->setProperty("text", QStringLiteral("{\"a\":1}"));
+    QTest::qWait(20);
+
+    // Auth tab: mode from the segmented control; fields live in page state
+    // (authDraft) and survive mode switches — switching back rebuilds the
+    // map from the draft, so a restored token never silently disappears.
+    QVERIFY(QMetaObject::invokeMethod(tabs, "activated", Q_ARG(int, 3)));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("tabIndex").toInt(), 3);
+    QQuickItem *authMode = pane->findChild<QQuickItem *>(QStringLiteral("apiAuthMode"));
+    QVERIFY(authMode != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(pane, "selectAuthType", Q_ARG(QVariant, 1)));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("authType").toString(), QStringLiteral("bearer"));
+    QCOMPARE(authMode->property("currentIndex").toInt(), 1);
+    QVERIFY(QMetaObject::invokeMethod(pane, "setAuthField",
+        Q_ARG(QVariant, QStringLiteral("token")), Q_ARG(QVariant, QStringLiteral("tok"))));
+    QVERIFY(QMetaObject::invokeMethod(pane, "selectAuthType", Q_ARG(QVariant, 2)));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("authType").toString(), QStringLiteral("basic"));
+    QVERIFY(QMetaObject::invokeMethod(pane, "setAuthField",
+        Q_ARG(QVariant, QStringLiteral("username")), Q_ARG(QVariant, QStringLiteral("user"))));
+    QVERIFY(QMetaObject::invokeMethod(pane, "setAuthField",
+        Q_ARG(QVariant, QStringLiteral("password")), Q_ARG(QVariant, QStringLiteral("pw"))));
+    // Back to Bearer: the draft (page state) still holds the token.
+    QVERIFY(QMetaObject::invokeMethod(pane, "selectAuthType", Q_ARG(QVariant, 1)));
+    QTest::qWait(20);
+    QVariantMap authDraft = pane->property("authDraft").value<QVariantMap>();
+    QCOMPARE(authDraft.value(QStringLiteral("token")).toString(), QStringLiteral("tok"));
+    QVariantMap auth = pane->property("requestMap").value<QVariantMap>()
+                           .value(QStringLiteral("auth")).toMap();
+    QCOMPARE(auth.value(QStringLiteral("type")).toString(), QStringLiteral("bearer"));
+    QCOMPARE(auth.value(QStringLiteral("token")).toString(), QStringLiteral("tok"));
+    // Back to Basic for the save: user+pass in place.
+    QVERIFY(QMetaObject::invokeMethod(pane, "selectAuthType", Q_ARG(QVariant, 2)));
+    QTest::qWait(20);
+
+    // Saving syncs the rows and the body/auth state into the working map.
+    QVERIFY(QMetaObject::invokeMethod(pane, "syncToRequestMap"));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("dirty").toBool(), true);
+    QVariantMap working = pane->property("requestMap").value<QVariantMap>();
+    QVariantList params = working.value(QStringLiteral("params")).toList();
+    QCOMPARE(params.size(), 1);
+    QVariantMap p0 = params.at(0).toMap();
+    QCOMPARE(p0.value(QStringLiteral("name")).toString(), QStringLiteral("page"));
+    QCOMPARE(p0.value(QStringLiteral("value")).toString(), QStringLiteral("2"));
+    QCOMPARE(p0.value(QStringLiteral("enabled")).toBool(), true);
+    QVariantList headers = working.value(QStringLiteral("headers")).toList();
+    QCOMPARE(headers.size(), 1);
+    QVariantMap hh0 = headers.at(0).toMap();
+    QCOMPARE(hh0.value(QStringLiteral("name")).toString(), QStringLiteral("Authorization"));
+    QCOMPARE(hh0.value(QStringLiteral("value")).toString(), QStringLiteral("Bearer q"));
+    QCOMPARE(working.value(QStringLiteral("body")).toString(), QStringLiteral("{\"a\":1}"));
+    QVariantMap a0 = working.value(QStringLiteral("auth")).toMap();
+    QCOMPARE(a0.value(QStringLiteral("type")).toString(), QStringLiteral("basic"));
+    QCOMPARE(a0.value(QStringLiteral("username")).toString(), QStringLiteral("user"));
+    QCOMPARE(a0.value(QStringLiteral("password")).toString(), QStringLiteral("pw"));
+
+    // Sending locks the panel (page-level surfaces), like the URL bar.
+    QQuickItem *urlField = pane->findChild<QQuickItem *>(QStringLiteral("apiUrlField"));
+    QQuickItem *methodSelect = pane->findChild<QQuickItem *>(QStringLiteral("apiMethodSelect"));
+    QVERIFY(urlField != nullptr);
+    QVERIFY(methodSelect != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(pane, "startSend"));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("sending").toBool(), true);
+    QCOMPARE(urlField->property("enabled").toBool(), false);
+    QCOMPARE(methodSelect->property("enabled").toBool(), false);
+    QCOMPARE(addParam->property("enabled").toBool(), false);
+    QCOMPARE(bodyMode->property("enabled").toBool(), false);
+    QCOMPARE(authMode->property("enabled").toBool(), false);
+    QVERIFY(QMetaObject::invokeMethod(pane, "cancelSend"));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("sending").toBool(), false);
+    QCOMPARE(urlField->property("enabled").toBool(), true);
+    QCOMPARE(addParam->property("enabled").toBool(), true);
+
+    delete obj;
+}
+
+// The "unsaved changes · Save" tail lives on the Dashboard header's breadcrumb
+// row, right-aligned (the design's request row was ← Back · crumbs · unsaved
+// changes · Save; both the crumbs and the tail are the header's). Drive the
+// wiring end to end: hidden until a request is open, appears for a draft, its
+// click reaches the pane's save() (dialog name field gets the suggested name),
+// and it collapses again once the request is saved clean.
+void QmlTests::test_header_save_tail()
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("projectService", g_projectService);
+    engine.rootContext()->setContextProperty("logModel", g_logModel);
+    static LogModel commandLog;
+    engine.rootContext()->setContextProperty("commandLog", &commandLog);
+    static CommandExecutor commandExecutor;
+    engine.rootContext()->setContextProperty("commandExecutor", &commandExecutor);
+    FakeApiService api;
+    engine.rootContext()->setContextProperty("apiService", &api);
+
+    const QString buildDir = QDir::currentPath();
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(buildDir + "/icons/").toString());
+    QString qmlPath = QDir::cleanPath(buildDir + "/../qml/Dashboard.qml");
+    if (!QFile::exists(qmlPath))
+        qmlPath = buildDir + "/qml/Dashboard.qml";
+
+    QQmlComponent component(&engine, QUrl::fromLocalFile(qmlPath));
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+
+    QQuickWindow window;
+    window.resize(960, 800);
+    QObject *obj = component.createWithInitialProperties({}, engine.rootContext());
+    QVERIFY(obj != nullptr);
+    auto *dashboard = qobject_cast<QQuickItem *>(obj);
+    QVERIFY(dashboard != nullptr);
+    dashboard->setParentItem(window.contentItem());
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTest::qWait(50);
+
+    QQuickItem *tail = dashboard->findChild<QQuickItem *>("headerSaveTail");
+    QVERIFY(tail != nullptr);
+    QQuickItem *hint = dashboard->findChild<QQuickItem *>("headerUnsavedLabel");
+    QVERIFY(hint != nullptr);
+    QQuickItem *saveButton = dashboard->findChild<QQuickItem *>("headerSaveButton");
+    QVERIFY(saveButton != nullptr);
+
+    // Nothing open: the tail stays hidden (visible is bound to
+    // apiPage.requestUnsaved).
+    QCOMPARE(tail->property("visible").toBool(), false);
+    QCOMPARE(hint->property("visible").toBool(), false);
+    QCOMPARE(saveButton->property("visible").toBool(), false);
+
+    // Open a draft: drafts are always unsaved -> the tail appears, the
+    // button carries the Lucide save icon (themed through Theme.icon).
+    QQuickItem *apiPage = dashboard->findChild<QQuickItem *>("apiPage");
+    QVERIFY(apiPage != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(apiPage, "openDraft",
+        Q_ARG(QVariant, QStringLiteral("http://localhost:8000/"))));
+    QVERIFY(apiPage->property("requestOpen").toBool());
+    QTest::qWait(50);
+    QCOMPARE(tail->property("visible").toBool(), true);
+    QCOMPARE(hint->property("visible").toBool(), true);
+    QCOMPARE(saveButton->property("visible").toBool(), true);
+    QVERIFY(saveButton->property("enabled").toBool());
+    QVERIFY(!saveButton->property("leadingIconSource").toUrl().isEmpty());
+
+    // Clicking the header button must reach the pane's save(): the save
+    // dialog cannot open on a bare QQuickWindow (Popup needs the overlay), so
+    // assert the effect — openFor prefills the dialog's name field.
+    QVERIFY(QMetaObject::invokeMethod(saveButton, "clicked"));
+    QTest::qWait(50);
+    QObject *saveDialog = dashboard->findChild<QObject *>("apiSaveDialog");
+    QVERIFY(saveDialog != nullptr);
+    QQuickItem *dialogName = saveDialog->findChild<QQuickItem *>(
+        QStringLiteral("apiSaveNameField"));
+    QVERIFY(dialogName != nullptr);
+    QCOMPARE(dialogName->property("text").toString(), QStringLiteral("GET /"));
+
+    // Confirm through the dialog persists the draft; once saved clean the
+    // tail collapses even though the request stays open.
+    QVERIFY(QMetaObject::invokeMethod(saveDialog, "confirmSave"));
+    QTest::qWait(50);
+    QVERIFY(apiPage->property("requestOpen").toBool());
+    QCOMPARE(api.requests().size(), 1);
+    QCOMPARE(tail->property("visible").toBool(), false);
+    QCOMPARE(saveButton->property("visible").toBool(), false);
+
+    delete obj;
+}
+
 // AppDialog (and any AppDialog-based dialog) must open under both hosting
 // scenarios the project uses: a plain Window (main.qml — the overlay does
 // not exist there, so binding `parent: Overlay.overlay` resolved to null and

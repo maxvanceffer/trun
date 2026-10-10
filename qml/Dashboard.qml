@@ -1065,6 +1065,36 @@ Rectangle {
                 }
 
                 Item { Layout.fillWidth: true }
+
+                // Right tail of the breadcrumb row: the request page's
+                // "unsaved changes · Save" (the design's request row was
+                // ← Back · crumbs · unsaved changes · Save — the crumbs and
+                // the tail both live in the header). Visible while a request
+                // is open and there is something to save; drafts are always
+                // unsaved, a saved request only after an edit.
+                RowLayout {
+                    objectName: "headerSaveTail"
+                    visible: apiPage.requestUnsaved
+                    spacing: Theme.spacingSm
+                    Layout.alignment: Qt.AlignVCenter
+
+                    Label {
+                        objectName: "headerUnsavedLabel"
+                        text: qsTr("unsaved changes")
+                        color: Theme.textSubtle
+                        font.pixelSize: Theme.fontSizeSm
+                    }
+
+                    UiButton {
+                        objectName: "headerSaveButton"
+                        label: apiPage.requestSaveLabel
+                        color: "neutral"
+                        variant: "outline"
+                        size: "sm"
+                        leadingIconSource: Theme.icon("save")
+                        onClicked: apiPage.headerSave()
+                    }
+                }
             }
         }
 

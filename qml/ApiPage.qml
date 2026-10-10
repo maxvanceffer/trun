@@ -120,6 +120,19 @@ Item {
     // var does not re-evaluate a binding on requestMap).
     property string requestName: ""
 
+    // The header takes the request page's "unsaved changes · Save" tail (the
+    // design's row was ← Back · crumbs · unsaved changes · Save — both the
+    // crumbs and the tail live on the Dashboard breadcrumb row). These
+    // passthroughs keep the header decoupled from the pane's internals:
+    // requestPane's ids are not visible outside ApiPage.qml.
+    readonly property bool requestUnsaved: requestOpen && requestPane.showUnsaved
+    readonly property string requestSaveLabel: requestOpen ? requestPane.saveLabel() : ""
+
+    function headerSave() {
+        if (requestOpen)
+            requestPane.save()
+    }
+
     // "+ New request" and a running-server "Open →" open the request page
     // with a fresh draft; nothing is persisted until Save (T4's newUntitled
     // is gone). History cards reopen their entry as a draft too.

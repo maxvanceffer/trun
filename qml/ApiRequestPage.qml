@@ -3,7 +3,6 @@ import QtQuick.Controls
 import QtQuick.Layouts
 import "Ui"
 import "components"
-pragma ComponentBehavior: Bound
 
 // API request page — the second level inside ApiPage. The design's request
 // page opens with a top row (name, "unsaved changes", Save) and no in-page
@@ -41,6 +40,37 @@ Item {
     // bumps this counter to pull the preview.
     property int resolveTick: 0
 
+    // ─── R5: tab panel state ───────────────────────────────────────────
+    // KV rows are QML-var JS arrays — the codebase's mutate-and-tick idiom:
+    // a text edit writes the row field without re-evaluating bindings (no
+    // cursor fight inside the inputs), while resolveTick pulls the resolved
+    // line on demand. Add/remove and the checkbox toggle reassign the array
+    // (delegates re-read their state; typed values persist), which also
+    // refreshes the UiTabs badges and the Repeaters. On Save the rows are
+    // written back into requestMap.params / requestMap.headers.
+    property var paramRows: []
+    property var headerRows: []
+
+    // The active tab (Params / Headers / Body / Auth) and the Body / Auth
+    // panel modes. Mode state is page state, not persisted (the schema
+    // stores body text and auth fields, not the mode): authType comes
+    // back from the map; bodyMode derives from the content (the fields
+    // would otherwise be invisible on a reopen).
+    property int tabIndex: 0
+    property string bodyMode: "none"      // none | json | form
+    property string authType: "none"      // none | bearer | basic
+
+    // Auth fields live as page state: the inputs bind to it (QML-var
+    // mutation never re-evaluates, so typing is cursor-safe), the Loader
+    // rebuilds them on every Auth-tab open so a reopen re-reads restored
+    // values, and selectAuthType rebuilds the map from this object — so a
+    // mode switch never silently drops what was typed.
+    property var authDraft: ({ token: "", username: "", password: "" })
+
+    // Guards the body textarea's restore on openWith: the binding write
+    // must never mark a freshly opened request dirty.
+    property bool bodyGuard: false
+
     readonly property bool showUnsaved: reqRoot.dirty || !reqRoot.saved
 
     // "Saved ✓" flash after a successful save (design's saveLabel).
@@ -57,12 +87,224 @@ Item {
 
     // ApiPage hands the map over on every open; null closes the page.
     function openWith(map, wasSaved) {
+        // bodyGuard keeps the textarea's restore write from marking the
+        // freshly opened request dirty (binding writes fire textChanged).
+        reqRoot.bodyGuard = true
         requestMap = map
         saved = wasSaved
         dirty = false
         savedFlash = false
+        tabIndex = 0
+        reqRoot.rebuildKvRows()
+        reqRoot.resetPanelModes()
+        reqRoot.bodyGuard = false
         if (map)
             reqRoot.renameOccurred()
+    }
+
+    // ─── R5: KV rows (Params / Headers) ────────────────────────────────
+    // Rows are { enabled, name, value }; QML-var fields don't re-evaluate
+    // bindings, so the resolved line pulls the resolve tick explicitly,
+    // while add/remove and the checkbox toggle reassign the array (which
+    // refreshes the counts and re-reads the row state).
+    readonly property var tabItems: [
+        { label: qsTr("Params"), badge: reqRoot.paramRows.length },
+        { label: qsTr("Headers"), badge: reqRoot.headerRows.length },
+        { label: qsTr("Body"), badge: 0 },
+        { label: qsTr("Auth"), badge: 0 }
+    ]
+
+    function kvEdited() {
+        reqRoot.dirty = true
+        reqRoot.resolveTick++
+    }
+
+    function normalizeKvRows(rows) {
+        var out = []
+        var src = rows || []
+        for (var i = 0; i < src.length; ++i) {
+            var r = src[i]
+            out.push({
+                enabled: r.enabled !== false,
+                name: r.name || "",
+                value: r.value || ""
+            })
+        }
+        return out
+    }
+
+    function rebuildKvRows() {
+        if (!reqRoot.requestMap) {
+            reqRoot.paramRows = []
+            reqRoot.headerRows = []
+            return
+        }
+        reqRoot.paramRows = reqRoot.normalizeKvRows(reqRoot.requestMap.params)
+        reqRoot.headerRows = reqRoot.normalizeKvRows(reqRoot.requestMap.headers)
+    }
+
+    function kvAddParam() {
+        reqRoot.paramRows = reqRoot.paramRows.concat({
+            enabled: true, name: "", value: ""
+        })
+        reqRoot.kvEdited()
+    }
+
+    function kvRemoveParam(index) {
+        var rows = reqRoot.paramRows.concat()
+        if (index < 0 || index >= rows.length)
+            return
+        rows.splice(index, 1)
+        reqRoot.paramRows = rows
+        reqRoot.kvEdited()
+    }
+
+    // Text edits mutate the row in place (no binding re-evaluation — the
+    // field's own text already shows the keystroke).
+    function kvParamSet(index, field, value) {
+        if (reqRoot.sending || index < 0 || index >= reqRoot.paramRows.length)
+            return
+        reqRoot.paramRows[index][field] = value
+        reqRoot.kvEdited()
+    }
+
+    // The enabled toggle reassigns the array so the checkbox's bound
+    // `checked` re-reads its state (Mutation alone would leave it stale).
+    function kvParamToggle(index, on) {
+        var rows = reqRoot.paramRows.concat()
+        if (index < 0 || index >= rows.length)
+            return
+        rows[index].enabled = on
+        reqRoot.paramRows = rows
+        reqRoot.kvEdited()
+    }
+
+    function kvAddHeader() {
+        reqRoot.headerRows = reqRoot.headerRows.concat({
+            enabled: true, name: "", value: ""
+        })
+        reqRoot.kvEdited()
+    }
+
+    function kvRemoveHeader(index) {
+        var rows = reqRoot.headerRows.concat()
+        if (index < 0 || index >= rows.length)
+            return
+        rows.splice(index, 1)
+        reqRoot.headerRows = rows
+        reqRoot.kvEdited()
+    }
+
+    function kvHeaderSet(index, field, value) {
+        if (reqRoot.sending || index < 0 || index >= reqRoot.headerRows.length)
+            return
+        reqRoot.headerRows[index][field] = value
+        reqRoot.kvEdited()
+    }
+
+    function kvHeaderToggle(index, on) {
+        var rows = reqRoot.headerRows.concat()
+        if (index < 0 || index >= rows.length)
+            return
+        rows[index].enabled = on
+        reqRoot.headerRows = rows
+        reqRoot.kvEdited()
+    }
+
+    // Writes the rows back into the working map — called before Save, since
+    // the arrays are the live source until then. (A send/history in R6
+    // syncs the same way.)
+    function syncToRequestMap() {
+        if (!reqRoot.requestMap)
+            return
+        reqRoot.requestMap.params = reqRoot.paramRows.map(function (r) {
+            return { enabled: r.enabled, name: r.name, value: r.value }
+        })
+        reqRoot.requestMap.headers = reqRoot.headerRows.map(function (r) {
+            return { enabled: r.enabled, name: r.name, value: r.value }
+        })
+    }
+
+    // ─── R5: Body + Auth panel modes ───────────────────────────────────
+    readonly property var bodyModes: ["none", "json", "form"]
+    readonly property var authTypes: ["none", "bearer", "basic"]
+
+    function bodyModeIndex() {
+        var i = reqRoot.bodyModes.indexOf(reqRoot.bodyMode)
+        return i < 0 ? 0 : i
+    }
+
+    function authTypeIndex() {
+        var i = reqRoot.authTypes.indexOf(reqRoot.authType)
+        return i < 0 ? 0 : i
+    }
+
+    // authType lives in the schema (auth.type) and returns from the map;
+    // bodyMode has no stored counterpart, so a body with content opens as
+    // json (Form is one click away, the text never disappears).
+    function resetPanelModes() {
+        var a = reqRoot.requestMap && reqRoot.requestMap.auth
+            ? reqRoot.requestMap.auth : null
+        var type = a ? (a.type || "none") : "none"
+        reqRoot.authType = reqRoot.authTypes.indexOf(type) >= 0 ? type : "none"
+        reqRoot.authDraft = {
+            token: a ? (a.token || "") : "",
+            username: a ? (a.username || "") : "",
+            password: a ? (a.password || "") : ""
+        }
+        var body = reqRoot.requestMap ? (reqRoot.requestMap.body || "") : ""
+        reqRoot.bodyMode = body.trim() === "" ? "none" : "json"
+    }
+
+    function selectBodyMode(index) {
+        if (index < 0 || index >= reqRoot.bodyModes.length)
+            return
+        if (reqRoot.bodyMode !== reqRoot.bodyModes[index]) {
+            reqRoot.bodyMode = reqRoot.bodyModes[index]
+            reqRoot.dirty = true
+        }
+    }
+
+    function bodyChanged(text) {
+        if (!reqRoot.requestMap)
+            return
+        reqRoot.requestMap.body = text
+        reqRoot.dirty = true
+    }
+
+    function selectAuthType(index) {
+        if (index < 0 || index >= reqRoot.authTypes.length)
+            return
+        var t = reqRoot.authTypes[index]
+        if (reqRoot.authType !== t) {
+            reqRoot.authType = t
+            // Rebuild the map's auth from the draft, keeping only the
+            // fields the type uses (so a switch back restores them and
+            // irrelevant ones don't persist).
+            if (reqRoot.requestMap) {
+                var a = { type: t }
+                if (t === "bearer")
+                    a.token = reqRoot.authDraft.token || ""
+                if (t === "basic") {
+                    a.username = reqRoot.authDraft.username || ""
+                    a.password = reqRoot.authDraft.password || ""
+                }
+                reqRoot.requestMap.auth = a
+            }
+            reqRoot.dirty = true
+        }
+    }
+
+    function setAuthField(field, value) {
+        if (!reqRoot.requestMap)
+            return
+        var d = reqRoot.authDraft
+        d[field] = value
+        reqRoot.authDraft = d
+        var a = reqRoot.requestMap.auth || { type: reqRoot.authType }
+        a[field] = value
+        reqRoot.requestMap.auth = a
+        reqRoot.dirty = true
     }
 
     // Row colours, mirror of ApiPage.methodColor (single source until R4
@@ -171,7 +413,26 @@ Item {
             var value = v.secret ? "••••••••" : (v.value || "")
             url = url.split("{{" + name + "}}").join(value)
         }
+        // Enabled params with a name append as query — the resolved URL is
+        // what Send would call (and R6 stores in history).
+        var query = reqRoot.queryFromParams()
+        if (query !== "")
+            url += (url.indexOf("?") >= 0 ? "&" : "?") + query
         return url
+    }
+
+    // The resolved line pulls resolveTick explicitly — rows are QML-var
+    // objects, so an edit bumps the tick instead of re-evaluating one.
+    function queryFromParams() {
+        var tick = reqRoot.resolveTick // binding dependency
+        var rows = reqRoot.paramRows
+        var parts = []
+        for (var i = 0; i < rows.length; ++i) {
+            var r = rows[i]
+            if (r.enabled && (r.name || "") !== "")
+                parts.push(r.name + "=" + (r.value || ""))
+        }
+        return parts.join("&")
     }
 
     // Persists the working map; adopts the id returned by the service so the
@@ -179,6 +440,8 @@ Item {
     function doSave() {
         if (!reqRoot.svc || !reqRoot.requestMap)
             return false
+        // The KV models are the live source until save (R5).
+        reqRoot.syncToRequestMap()
         var id = reqRoot.svc.saveRequest(reqRoot.requestMap)
         if (id === "")
             return false
@@ -207,9 +470,10 @@ Item {
         anchors.margins: Theme.spacingLg
         spacing: Theme.spacingMd
 
-        // Top row: inline name · "unsaved changes" · Save. The tail of the
-        // design's breadcrumb without the crumbs — the API/project trail is
-        // the Dashboard header's job.
+        // Top row: the inline rename field. The design's tail ("unsaved
+        // changes · Save") sits on the shared Dashboard header's breadcrumb
+        // row, right-aligned; the page keeps the functional tail here —
+        // just the name.
         RowLayout {
             Layout.fillWidth: true
             spacing: Theme.spacingSm
@@ -239,28 +503,6 @@ Item {
             }
 
             Item { Layout.fillWidth: true }
-
-            // "unsaved changes" (design): drafts are always unsaved, saved
-            // requests show it while an edit is pending.
-            Label {
-                visible: reqRoot.showUnsaved
-                text: qsTr("unsaved changes")
-                color: Theme.textSubtle
-                font.pixelSize: Theme.fontSizeSm
-            }
-
-            UiButton {
-                Layout.alignment: Qt.AlignVCenter
-                // Shown only while there is something to save: drafts are
-                // always unsaved, a saved request only after an edit — the
-                // same predicate as the "unsaved changes" label.
-                visible: reqRoot.showUnsaved
-                label: reqRoot.saveLabel()
-                color: "neutral"
-                variant: "outline"
-                size: "sm"
-                onClicked: reqRoot.save()
-            }
         }
 
         // R4 body: the URL bar (method · URL · environment · Send/Cancel)
@@ -359,6 +601,486 @@ Item {
                 font.family: Theme.fontMono
                 font.pixelSize: Theme.fontSizeSm
                 elide: Text.ElideRight
+            }
+        }
+
+        // R5: tab bar (Params / Headers / Body / Auth — Nuxt Tabs pill,
+        // counts ride on the KV rows) with the design's shortcut hint; the
+        // active tab's panel sits underneath.
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: Theme.spacingMd
+
+            UiTabs {
+                id: apiTabs
+                objectName: "apiTabs"
+                color: "neutral"
+                items: reqRoot.tabItems
+                currentIndex: reqRoot.tabIndex
+                onActivated: function (index) { reqRoot.tabIndex = index }
+            }
+
+            Label {
+                Layout.fillWidth: true
+                Layout.alignment: Qt.AlignVCenter
+                horizontalAlignment: Text.AlignRight
+                text: qsTr("⌘↩ send · ⌘S save")
+                color: Theme.textSubtle
+                font.pixelSize: Theme.fontSizeSm
+            }
+        }
+
+        // Tab panel: all four stay alive (their rows keep uncommitted
+        // state), only the active one shows.
+        Item {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+
+            // ─── Params: KV rows (checkbox · key · value · ✕) ──────────
+            ColumnLayout {
+                id: paramsPanel
+                objectName: "apiParamsPanel"
+                anchors.fill: parent
+                visible: reqRoot.tabIndex === 0
+                spacing: Theme.spacingXs
+
+                Repeater {
+                    id: paramsRep
+                    Layout.fillWidth: true
+                    model: reqRoot.paramRows
+
+                    delegate: RowLayout {
+                        id: paramRow
+                        required property int index
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingXs
+
+                        UiCheckBox {
+                            id: paramToggle
+                            objectName: "apiParamEnabled" + paramRow.index
+                            Layout.preferredWidth: 18
+                            Layout.preferredHeight: 18
+                            Layout.alignment: Qt.AlignVCenter
+                            checked: paramRow.modelData.enabled
+                            onToggled: function (on) {
+                                reqRoot.kvParamToggle(paramRow.index, on)
+                            }
+                        }
+
+                        UiInput {
+                            objectName: "apiParamName" + paramRow.index
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 160
+                            Layout.alignment: Qt.AlignVCenter
+                            enabled: !reqRoot.sending
+                            placeholderText: qsTr("key")
+                            text: paramRow.modelData.name
+                            onTextEdited:
+                                reqRoot.kvParamSet(paramRow.index, "name", text)
+                        }
+
+                        UiInput {
+                            objectName: "apiParamValue" + paramRow.index
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 260
+                            Layout.alignment: Qt.AlignVCenter
+                            enabled: !reqRoot.sending
+                            placeholderText: qsTr("value")
+                            text: paramRow.modelData.value
+                            onTextEdited:
+                                reqRoot.kvParamSet(paramRow.index, "value", text)
+                        }
+
+                        // ✕ in a 16x16 circle, hover fill — the house remove
+                        // control (ConsoleParameters' option rows, UiAlert).
+                        AbstractButton {
+                            id: paramRemove
+                            objectName: "apiParamRemove" + paramRow.index
+                            Layout.preferredWidth: 16
+                            Layout.preferredHeight: 16
+                            Layout.alignment: Qt.AlignVCenter
+                            hoverEnabled: true
+                            enabled: !reqRoot.sending
+
+                            background: Rectangle {
+                                radius: 8
+                                color: paramRemove.hovered
+                                    ? Qt.rgba(Theme.primary.r, Theme.primary.g,
+                                              Theme.primary.b, 0.2) : "transparent"
+                            }
+                            contentItem: Label {
+                                text: "✕"
+                                color: Theme.primary
+                                font.pixelSize: 9
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: reqRoot.kvRemoveParam(paramRow.index)
+                        }
+                    }
+                }
+
+                // "+ Add param": the house dashed pill (ConsoleParameters).
+                AbstractButton {
+                    id: addParamPill
+                    objectName: "apiAddParam"
+                    Layout.topMargin: Theme.spacingXs
+                    implicitHeight: 24
+                    implicitWidth: addParamRow.implicitWidth + 20
+                    hoverEnabled: true
+                    enabled: !reqRoot.sending
+                    leftPadding: 10
+                    rightPadding: 10
+                    topPadding: 0
+                    bottomPadding: 0
+
+                    background: Item {
+                        // Hover fill UNDER the dashed border (a child of
+                        // the Canvas would paint over its dashes).
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: parent.height / 2
+                            color: addParamPill.hovered ? Theme.mutedSurface
+                                                       : "transparent"
+                        }
+
+                        Canvas {
+                            id: paramDash
+                            anchors.fill: parent
+                            onPaint: {
+                                var ctx = paramDash.getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.setLineDash([3, 3])
+                                ctx.lineWidth = 1
+                                ctx.strokeStyle = Theme.textMuted
+                                var r = height / 2
+                                ctx.beginPath()
+                                ctx.moveTo(width - r, 0.5)
+                                ctx.lineTo(r, 0.5)
+                                ctx.arc(r, r, r - 0.5, Math.PI * 1.5,
+                                        Math.PI * 0.5, true)
+                                ctx.lineTo(width - r, height - 0.5)
+                                ctx.arc(width - r, r, r - 0.5, Math.PI * 0.5,
+                                        Math.PI * 1.5, true)
+                                ctx.stroke()
+                            }
+                        }
+                    }
+
+                    contentItem: RowLayout {
+                        id: addParamRow
+                        spacing: 4
+
+                        Label {
+                            text: qsTr("+ Add param")
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontSizeMd
+                            font.weight: Font.DemiBold
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                    }
+                    onClicked: reqRoot.kvAddParam()
+                }
+            }
+
+            // ─── Headers: same KV editor ──────────────────────────────
+            ColumnLayout {
+                id: headersPanel
+                objectName: "apiHeadersPanel"
+                anchors.fill: parent
+                visible: reqRoot.tabIndex === 1
+                spacing: Theme.spacingXs
+
+                Repeater {
+                    id: headersRep
+                    Layout.fillWidth: true
+                    model: reqRoot.headerRows
+
+                    delegate: RowLayout {
+                        id: headerRow
+                        required property int index
+                        required property var modelData
+                        Layout.fillWidth: true
+                        spacing: Theme.spacingXs
+
+                        UiCheckBox {
+                            id: headerToggle
+                            objectName: "apiHeaderEnabled" + headerRow.index
+                            Layout.preferredWidth: 18
+                            Layout.preferredHeight: 18
+                            Layout.alignment: Qt.AlignVCenter
+                            checked: headerRow.modelData.enabled
+                            onToggled: function (on) {
+                                reqRoot.kvHeaderToggle(headerRow.index, on)
+                            }
+                        }
+
+                        UiInput {
+                            objectName: "apiHeaderName" + headerRow.index
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 220
+                            Layout.alignment: Qt.AlignVCenter
+                            enabled: !reqRoot.sending
+                            placeholderText: qsTr("header")
+                            text: headerRow.modelData.name
+                            onTextEdited:
+                                reqRoot.kvHeaderSet(headerRow.index, "name", text)
+                        }
+
+                        UiInput {
+                            objectName: "apiHeaderValue" + headerRow.index
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 260
+                            Layout.alignment: Qt.AlignVCenter
+                            enabled: !reqRoot.sending
+                            placeholderText: qsTr("value")
+                            text: headerRow.modelData.value
+                            onTextEdited:
+                                reqRoot.kvHeaderSet(headerRow.index, "value", text)
+                        }
+
+                        AbstractButton {
+                            id: headerRemove
+                            objectName: "apiHeaderRemove" + headerRow.index
+                            Layout.preferredWidth: 16
+                            Layout.preferredHeight: 16
+                            Layout.alignment: Qt.AlignVCenter
+                            hoverEnabled: true
+                            enabled: !reqRoot.sending
+
+                            background: Rectangle {
+                                radius: 8
+                                color: headerRemove.hovered
+                                    ? Qt.rgba(Theme.primary.r, Theme.primary.g,
+                                              Theme.primary.b, 0.2) : "transparent"
+                            }
+                            contentItem: Label {
+                                text: "✕"
+                                color: Theme.primary
+                                font.pixelSize: 9
+                                horizontalAlignment: Text.AlignHCenter
+                                verticalAlignment: Text.AlignVCenter
+                            }
+                            onClicked: reqRoot.kvRemoveHeader(headerRow.index)
+                        }
+                    }
+                }
+
+                AbstractButton {
+                    id: addHeaderPill
+                    objectName: "apiAddHeader"
+                    Layout.topMargin: Theme.spacingXs
+                    implicitHeight: 24
+                    implicitWidth: addHeaderRow.implicitWidth + 20
+                    hoverEnabled: true
+                    enabled: !reqRoot.sending
+                    leftPadding: 10
+                    rightPadding: 10
+                    topPadding: 0
+                    bottomPadding: 0
+
+                    background: Item {
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: parent.height / 2
+                            color: addHeaderPill.hovered ? Theme.mutedSurface
+                                                        : "transparent"
+                        }
+
+                        Canvas {
+                            id: headerDash
+                            anchors.fill: parent
+                            onPaint: {
+                                var ctx = headerDash.getContext("2d")
+                                ctx.clearRect(0, 0, width, height)
+                                ctx.setLineDash([3, 3])
+                                ctx.lineWidth = 1
+                                ctx.strokeStyle = Theme.textMuted
+                                var r = height / 2
+                                ctx.beginPath()
+                                ctx.moveTo(width - r, 0.5)
+                                ctx.lineTo(r, 0.5)
+                                ctx.arc(r, r, r - 0.5, Math.PI * 1.5,
+                                        Math.PI * 0.5, true)
+                                ctx.lineTo(width - r, height - 0.5)
+                                ctx.arc(width - r, r, r - 0.5, Math.PI * 0.5,
+                                        Math.PI * 1.5, true)
+                                ctx.stroke()
+                            }
+                        }
+                    }
+
+                    contentItem: RowLayout {
+                        id: addHeaderRow
+                        spacing: 4
+
+                        Label {
+                            text: qsTr("+ Add header")
+                            color: Theme.textPrimary
+                            font.pixelSize: Theme.fontSizeMd
+                            font.weight: Font.DemiBold
+                            Layout.alignment: Qt.AlignVCenter
+                        }
+                    }
+                    onClicked: reqRoot.kvAddHeader()
+                }
+            }
+
+            // ─── Body: mode segmented + mono textarea + hint ───────────
+            ColumnLayout {
+                id: bodyPanel
+                objectName: "apiBodyPanel"
+                anchors.fill: parent
+                visible: reqRoot.tabIndex === 2
+                spacing: Theme.spacingSm
+
+                UiSegmented {
+                    id: bodyModeSeg
+                    objectName: "apiBodyMode"
+                    model: ["None", "JSON", "Form"]
+                    currentIndex: reqRoot.bodyModeIndex()
+                    enabled: !reqRoot.sending
+                    onActivated: function (index) { reqRoot.selectBodyMode(index) }
+                }
+
+                ScrollView {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    visible: reqRoot.bodyMode !== "none"
+                    clip: true
+
+                    TextArea {
+                        id: bodyArea
+                        objectName: "apiBodyArea"
+                        font.family: Theme.fontMono
+                        font.pixelSize: Theme.fontSizeMd
+                        color: Theme.textPrimary
+                        placeholderText: reqRoot.bodyMode === "form"
+                            ? qsTr("key=value") : qsTr("{ }")
+                        placeholderTextColor: Theme.textMuted
+                        wrapMode: Text.Wrap
+                        selectByMouse: true
+                        enabled: !reqRoot.sending
+                        text: reqRoot.requestMap
+                            ? (reqRoot.requestMap.body || "") : ""
+                        onTextChanged: {
+                            if (reqRoot.bodyGuard)
+                                return
+                            reqRoot.bodyChanged(text)
+                        }
+                        background: Rectangle {
+                            color: Theme.mutedSurface
+                            border.color: bodyArea.activeFocus ? Theme.accent
+                                                               : Theme.border
+                            border.width: 1
+                            radius: Theme.radiusSm
+                        }
+                    }
+                }
+
+                Label {
+                    visible: reqRoot.bodyMode !== "none"
+                    text: reqRoot.bodyMode === "form"
+                        ? qsTr("key=value per line") : qsTr("application/json")
+                    color: Theme.textSubtle
+                    font.pixelSize: Theme.fontSizeSm
+                }
+            }
+
+            // ─── Auth: mode segmented + token / user+pass + hint ────────
+            ColumnLayout {
+                id: authPanel
+                objectName: "apiAuthPanel"
+                anchors.fill: parent
+                visible: reqRoot.tabIndex === 3
+                spacing: Theme.spacingSm
+
+                UiSegmented {
+                    id: authModeSeg
+                    objectName: "apiAuthMode"
+                    model: ["None", "Bearer", "Basic"]
+                    currentIndex: reqRoot.authTypeIndex()
+                    enabled: !reqRoot.sending
+                    onActivated: function (index) { reqRoot.selectAuthType(index) }
+                }
+
+                // The auth fields rebuild every time the tab opens (the
+                // Loader keys on the active tab): their bindings read
+                // QML-var state, which re-evaluates on construction rather
+                // than on edit — this is what makes a restored token
+                // visible again. Visibility inside follows the mode.
+                Loader {
+                    id: authFields
+                    Layout.fillWidth: true
+                    active: reqRoot.tabIndex === 3
+                    visible: reqRoot.authType !== "none"
+
+                    sourceComponent: ColumnLayout {
+                        spacing: Theme.spacingXs
+
+                        // Bearer: a single token.
+                        Label {
+                            visible: reqRoot.authType === "bearer"
+                            text: qsTr("Token")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontSizeSm
+                        }
+
+                        UiInput {
+                            objectName: "apiAuthToken"
+                            Layout.fillWidth: true
+                            visible: reqRoot.authType === "bearer"
+                            enabled: !reqRoot.sending
+                            text: reqRoot.authDraft.token
+                            onTextEdited: reqRoot.setAuthField("token", text)
+                        }
+
+                        // Basic: username + password — the pair the client
+                        // would base64 into the Authorization header.
+                        Label {
+                            visible: reqRoot.authType === "basic"
+                            text: qsTr("Username")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontSizeSm
+                        }
+
+                        UiInput {
+                            objectName: "apiAuthUsername"
+                            Layout.fillWidth: true
+                            visible: reqRoot.authType === "basic"
+                            enabled: !reqRoot.sending
+                            text: reqRoot.authDraft.username
+                            onTextEdited: reqRoot.setAuthField("username", text)
+                        }
+
+                        Label {
+                            visible: reqRoot.authType === "basic"
+                            text: qsTr("Password")
+                            color: Theme.textMuted
+                            font.pixelSize: Theme.fontSizeSm
+                        }
+
+                        UiInput {
+                            objectName: "apiAuthPassword"
+                            Layout.fillWidth: true
+                            visible: reqRoot.authType === "basic"
+                            echoMode: TextInput.Password
+                            enabled: !reqRoot.sending
+                            text: reqRoot.authDraft.password
+                            onTextEdited: reqRoot.setAuthField("password", text)
+                        }
+                    }
+                }
+
+                Label {
+                    visible: reqRoot.authType !== "none"
+                    text: reqRoot.authType === "basic"
+                        ? qsTr("Sent as Authorization: Basic base64(username:password)")
+                        : qsTr("Sent as Authorization: Bearer token")
+                    color: Theme.textSubtle
+                    font.pixelSize: Theme.fontSizeSm
+                }
             }
         }
     }

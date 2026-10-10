@@ -36,6 +36,7 @@
         <file>qml/Ui/UiCheckBox.qml</file>
         <file>qml/Ui/UiInput.qml</file>
         <file>qml/Ui/UiTag.qml</file>
+        <file>qml/Ui/UiTabs.qml</file>
         <file>qml/Ui/UiAlert.qml</file>
         <file>qml/Ui/UiTooltip.qml</file>
         <file>qml/Ui/UiIcon.qml</file>
@@ -122,5 +123,7 @@
         <file>assets/icons/symfony.png</file>
         <file>assets/icons/symfony-dark.png</file>
         <file>assets/icons/laravel.png</file>
+        <file>assets/icons/save.png</file>
+        <file>assets/icons/save-dark.png</file>
     </qresource>
 </RCC>
