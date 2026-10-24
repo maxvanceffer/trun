@@ -29,6 +29,8 @@
         <file>qml/DockerPage.qml</file>
         <file>qml/ApiPage.qml</file>
         <file>qml/ApiRequestPage.qml</file>
+        <file>qml/ApiResponsePanel.qml</file>
+        <file>qml/JsonFormat.js</file>
         <file>qml/EnvironmentsDialog.qml</file>
         <file>qml/BusyLabel.qml</file>
         <file>qml/Spinner.qml</file>

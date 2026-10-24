@@ -58,6 +58,7 @@ private slots:
     void test_api_page_keys();
     void test_api_request_urlbar();
     void test_api_request_tabs();
+    void test_api_response_panel();
     void test_header_save_tail();
     void test_app_dialog_hosting();
     void test_ui_list_element_click_through();

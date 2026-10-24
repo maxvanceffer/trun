@@ -31,9 +31,11 @@ Item {
 
     property bool savedFlash: false
 
-    // R4: an in-flight send. UI stub until R6 wires the network slice —
-    // while true the URL bar locks and Send becomes Cancel.
-    property bool sending: false
+    // R6: an in-flight send, owned by the service (one send at a time) — the
+    // URL bar and editors lock while true and Send shows its spinner while
+    // Cancel sits beside it. Bound, not stored: the service is the single
+    // source of truth.
+    readonly property bool sending: reqRoot.svc ? reqRoot.svc.sending : false
 
     // Live-refresh tick for the "→ resolved" line: edits land in QML-var
     // fields, which do not re-evaluate bindings, so typing in the URL field
@@ -71,6 +73,25 @@ Item {
     // must never mark a freshly opened request dirty.
     property bool bodyGuard: false
 
+    // ─── R6: response state ─────────────────────────────────────────────
+    // The last response (null until one arrives), a network-level error
+    // string, and the host a failed request was aimed at. `sending` + these
+    // three drive the response panel's four states. A 4xx/5xx lands in
+    // `response` (it is a reply, not an error).
+    property var response: null
+    property string responseError: ""
+    property string responseHost: ""
+
+    readonly property string responseState: reqRoot.sending
+        ? "loading"
+        : (reqRoot.response !== null
+           ? "success"
+           : (reqRoot.responseError !== "" ? "error" : "empty"))
+
+    // Share of the body height the request pane takes (fixed split, no
+    // resizer — the design has none); the response panel takes the rest.
+    readonly property real requestShare: 0.5
+
     readonly property bool showUnsaved: reqRoot.dirty || !reqRoot.saved
 
     // "Saved ✓" flash after a successful save (design's saveLabel).
@@ -95,6 +116,9 @@ Item {
         dirty = false
         savedFlash = false
         tabIndex = 0
+        reqRoot.response = null
+        reqRoot.responseError = ""
+        reqRoot.responseHost = ""
         reqRoot.rebuildKvRows()
         reqRoot.resetPanelModes()
         reqRoot.bodyGuard = false
@@ -386,8 +410,79 @@ Item {
         reqRoot.svc.setActiveEnv(envs[index].id)
     }
 
-    function startSend() { reqRoot.sending = true }
-    function cancelSend() { reqRoot.sending = false }
+    // ─── R6: Send / Cancel ─────────────────────────────────────────────
+    // The KV rows are the live source until a send, so sync them into the
+    // map first, then hand the service a spec. Secret resolution happens on
+    // the C++ side (Keychain); QML only ever holds masked values.
+    function sendSpec() {
+        reqRoot.syncToRequestMap()
+        var m = reqRoot.requestMap || {}
+        return {
+            method: m.method || "GET",
+            url: m.url || "",
+            params: m.params || [],
+            headers: m.headers || [],
+            body: m.body || "",
+            bodyMode: reqRoot.bodyMode,
+            auth: m.auth || { type: "none" },
+            envId: reqRoot.svc ? reqRoot.svc.activeEnvId : ""
+        }
+    }
+
+    function startSend() {
+        if (!reqRoot.svc || !reqRoot.requestMap)
+            return
+        reqRoot.responseError = ""
+        reqRoot.responseHost = ""
+        reqRoot.svc.send(reqRoot.sendSpec())
+    }
+
+    function cancelSend() {
+        if (reqRoot.svc)
+            reqRoot.svc.cancel()
+    }
+
+    // Worker result → panel state plus the storage side-effects of a reply:
+    // stamp the saved request's lastStatus/lastAt and write history (with the
+    // masked resolved URL — the real one never leaves C++). A cancel changes
+    // nothing; a network error shows the error state and writes no history.
+    function onSendResult(result) {
+        if (result.canceled)
+            return
+        if (result.ok) {
+            reqRoot.response = {
+                status: result.status || 0,
+                reason: result.reason || "",
+                ms: result.ms || 0,
+                size: result.size || 0,
+                headers: result.headers || [],
+                body: result.body || "",
+                host: result.host || ""
+            }
+            reqRoot.responseError = ""
+            reqRoot.responseHost = result.host || ""
+            if (reqRoot.svc && reqRoot.requestMap) {
+                reqRoot.svc.updateRequestStatus(reqRoot.requestMap.id || "",
+                                                result.status || 0)
+                reqRoot.svc.appendHistory({
+                    method: reqRoot.requestMap.method || "GET",
+                    url: reqRoot.resolvedUrl(),
+                    status: result.status || 0
+                })
+            }
+        } else {
+            reqRoot.response = null
+            reqRoot.responseError = result.error || qsTr("Request failed")
+            reqRoot.responseHost = result.host || ""
+        }
+    }
+
+    Connections {
+        target: reqRoot.svc
+        enabled: reqRoot.svc !== null
+        ignoreUnknownSignals: true
+        function onSendFinished(result) { reqRoot.onSendResult(result) }
+    }
 
     // "→ {{ resolved }}" preview — the URL with active-environment variables
     // substituted. Secret values never reach QML (Keychain keeps them, the
@@ -465,9 +560,23 @@ Item {
             saveDialog.openFor(reqRoot.requestMap)
     }
 
-    ColumnLayout {
+    // R6 fixed split: page margins live on splitArea; the request pane (name ·
+    // URL bar · tabs · KV panel) takes the top slice, the response panel the
+    // rest. Each side handles its own overflow (the Body editor and the
+    // response body each scroll), so the split needs no resizer.
+    Item {
+        id: splitArea
         anchors.fill: parent
         anchors.margins: Theme.spacingLg
+    }
+
+    ColumnLayout {
+        id: requestColumn
+        anchors.left: splitArea.left
+        anchors.right: splitArea.right
+        anchors.top: splitArea.top
+        height: Math.max(180, Math.round(
+            (splitArea.height - Theme.spacingMd) * reqRoot.requestShare))
         spacing: Theme.spacingMd
 
         // Top row: the inline rename field. The design's tail ("unsaved
@@ -523,6 +632,7 @@ Item {
                     id: methodSelect
                     objectName: "apiMethodSelect"
                     Layout.preferredWidth: 108
+                    Layout.alignment: Qt.AlignTop
                     model: reqRoot.methodOpts
                     placeholderText: qsTr("Method")
                     searchable: false
@@ -533,22 +643,40 @@ Item {
                     onActivated: function (index) { reqRoot.selectMethod(index) }
                 }
 
-                // URL field: mono (Theme.fontMono). Editing marks dirty and
-                // refreshes the resolved line.
-                UiInput {
-                    id: urlField
-                    objectName: "apiUrlField"
+                // URL input with its resolved preview directly beneath it: the
+                // "→ {{ resolved }}" line starts under the field it resolves.
+                ColumnLayout {
                     Layout.fillWidth: true
-                    font.family: Theme.fontMono
-                    placeholderText: qsTr("https://…")
-                    text: reqRoot.requestMap ? (reqRoot.requestMap.url || "") : ""
-                    enabled: !reqRoot.sending
-                    onTextEdited: {
-                        if (reqRoot.requestMap) {
-                            reqRoot.requestMap.url = text
-                            reqRoot.dirty = true
-                            reqRoot.resolveTick++
+                    spacing: Theme.spacingXs
+
+                    // URL field: mono (Theme.fontMono). Editing marks dirty and
+                    // refreshes the resolved line.
+                    UiInput {
+                        id: urlField
+                        objectName: "apiUrlField"
+                        Layout.fillWidth: true
+                        font.family: Theme.fontMono
+                        placeholderText: qsTr("https://…")
+                        text: reqRoot.requestMap ? (reqRoot.requestMap.url || "") : ""
+                        enabled: !reqRoot.sending
+                        onTextEdited: {
+                            if (reqRoot.requestMap) {
+                                reqRoot.requestMap.url = text
+                                reqRoot.dirty = true
+                                reqRoot.resolveTick++
+                            }
                         }
+                    }
+
+                    // Resolved-URL line: "→ {{ resolved }}" — env vars substituted.
+                    Label {
+                        objectName: "apiResolvedLine"
+                        Layout.fillWidth: true
+                        text: qsTr("→ %1").arg(reqRoot.resolvedUrl())
+                        color: Theme.textSubtle
+                        font.family: Theme.fontMono
+                        font.pixelSize: Theme.fontSizeSm
+                        elide: Text.ElideRight
                     }
                 }
 
@@ -558,6 +686,7 @@ Item {
                     id: envSelect
                     objectName: "apiEnvSelect"
                     Layout.preferredWidth: 140
+                    Layout.alignment: Qt.AlignTop
                     model: reqRoot.envNames()
                     placeholderText: qsTr("Environment")
                     searchable: false
@@ -566,81 +695,120 @@ Item {
                     onActivated: function (index) { reqRoot.selectEnv(index) }
                 }
 
-                // Send ⇄ Cancel: a running request turns the spinner on inside the
-                // Send button (Nuxt `loading` — a loading button is disabled,
-                // so Cancel is a separate control beside it); R6 wires the
-                // actual network slice.
-                UiButton {
-                    objectName: "apiSendButton"
-                    Layout.alignment: Qt.AlignVCenter
-                    label: qsTr("Send")
-                    loading: reqRoot.sending
-                    color: "primary"
-                    variant: "solid"
-                    size: "md"
-                    onClicked: reqRoot.startSend()
-                }
-                UiButton {
-                    objectName: "apiCancelButton"
-                    Layout.alignment: Qt.AlignVCenter
-                    visible: reqRoot.sending
-                    label: qsTr("Cancel")
-                    color: "neutral"
-                    variant: "outline"
-                    size: "md"
-                    onClicked: reqRoot.cancelSend()
-                }
-            }
+                // Send ⇄ Cancel: a running request turns the spinner on inside
+                // the Send button (Nuxt `loading` — a loading button is
+                // disabled, so Cancel is a separate control beside it). The
+                // shortcut hint sits under the Send button, not the tab bar.
+                ColumnLayout {
+                    Layout.alignment: Qt.AlignTop
+                    spacing: Theme.spacingXs
 
-            // Resolved-URL line: "→ {{ resolved }}" — env vars substituted.
-            Label {
-                objectName: "apiResolvedLine"
-                Layout.fillWidth: true
-                text: qsTr("→ %1").arg(reqRoot.resolvedUrl())
-                color: Theme.textSubtle
-                font.family: Theme.fontMono
-                font.pixelSize: Theme.fontSizeSm
-                elide: Text.ElideRight
+                    RowLayout {
+                        Layout.alignment: Qt.AlignRight
+                        spacing: Theme.spacingSm
+
+                        UiButton {
+                            objectName: "apiSendButton"
+                            Layout.alignment: Qt.AlignVCenter
+                            label: qsTr("Send")
+                            loading: reqRoot.sending
+                            color: "primary"
+                            variant: "solid"
+                            size: "md"
+                            onClicked: reqRoot.startSend()
+                        }
+                        UiButton {
+                            objectName: "apiCancelButton"
+                            Layout.alignment: Qt.AlignVCenter
+                            visible: reqRoot.sending
+                            label: qsTr("Cancel")
+                            color: "neutral"
+                            variant: "outline"
+                            size: "md"
+                            onClicked: reqRoot.cancelSend()
+                        }
+                    }
+
+                    Label {
+                        objectName: "apiSendHint"
+                        Layout.alignment: Qt.AlignRight
+                        text: qsTr("⌘↩ send · ⌘S save")
+                        color: Theme.textSubtle
+                        font.pixelSize: Theme.fontSizeSm
+                    }
+                }
             }
         }
 
-        // R5: tab bar (Params / Headers / Body / Auth — Nuxt Tabs pill,
-        // counts ride on the KV rows) with the design's shortcut hint; the
-        // active tab's panel sits underneath.
-        RowLayout {
+        // The tab bar (Params / Headers / Body / Auth — Nuxt Tabs
+        // link/underline, counts ride on the KV rows) and its panel share
+        // one card, so the controls read as a single block. All four panels
+        // stay alive (their rows keep uncommitted state), only the active
+        // one shows.
+        Item {
             Layout.fillWidth: true
-            spacing: Theme.spacingMd
+            Layout.fillHeight: true
+
+            // Card surface: the tab bar and its panel are one visual unit.
+            Rectangle {
+                anchors.fill: parent
+                color: Theme.cardBackground
+                border.color: Theme.border
+                border.width: 1
+                radius: Theme.radiusMd
+            }
 
             UiTabs {
                 id: apiTabs
                 objectName: "apiTabs"
-                color: "neutral"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: parent.top
+                anchors.leftMargin: Theme.spacingMd
+                anchors.rightMargin: Theme.spacingMd
+                anchors.topMargin: Theme.spacingMd
+                color: "primary"
                 items: reqRoot.tabItems
                 currentIndex: reqRoot.tabIndex
                 onActivated: function (index) { reqRoot.tabIndex = index }
-            }
 
-            Label {
-                Layout.fillWidth: true
-                Layout.alignment: Qt.AlignVCenter
-                horizontalAlignment: Text.AlignRight
-                text: qsTr("⌘↩ send · ⌘S save")
-                color: Theme.textSubtle
-                font.pixelSize: Theme.fontSizeSm
-            }
-        }
+                // Sub-options for the open tab ride the bar's right slot
+                // (Nuxt's list-trailing): Body's mode (None/JSON/Form) and
+                // Auth's type (None/Bearer/Basic) appear only while their
+                // tab is active.
+                UiSegmented {
+                    id: bodyModeSeg
+                    objectName: "apiBodyMode"
+                    visible: reqRoot.tabIndex === 2
+                    model: ["None", "JSON", "Form"]
+                    currentIndex: reqRoot.bodyModeIndex()
+                    enabled: !reqRoot.sending
+                    onActivated: function (index) { reqRoot.selectBodyMode(index) }
+                }
 
-        // Tab panel: all four stay alive (their rows keep uncommitted
-        // state), only the active one shows.
-        Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+                UiSegmented {
+                    id: authModeSeg
+                    objectName: "apiAuthMode"
+                    visible: reqRoot.tabIndex === 3
+                    model: ["None", "Bearer", "Basic"]
+                    currentIndex: reqRoot.authTypeIndex()
+                    enabled: !reqRoot.sending
+                    onActivated: function (index) { reqRoot.selectAuthType(index) }
+                }
+            }
 
             // ─── Params: KV rows (checkbox · key · value · ✕) ──────────
             ColumnLayout {
                 id: paramsPanel
                 objectName: "apiParamsPanel"
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: apiTabs.bottom
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: Theme.spacingMd
+                anchors.rightMargin: Theme.spacingMd
+                anchors.topMargin: Theme.spacingMd
+                anchors.bottomMargin: Theme.spacingMd
                 visible: reqRoot.tabIndex === 0
                 spacing: Theme.spacingXs
 
@@ -788,7 +956,14 @@ Item {
             ColumnLayout {
                 id: headersPanel
                 objectName: "apiHeadersPanel"
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: apiTabs.bottom
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: Theme.spacingMd
+                anchors.rightMargin: Theme.spacingMd
+                anchors.topMargin: Theme.spacingMd
+                anchors.bottomMargin: Theme.spacingMd
                 visible: reqRoot.tabIndex === 1
                 spacing: Theme.spacingXs
 
@@ -927,22 +1102,20 @@ Item {
                 }
             }
 
-            // ─── Body: mode segmented + mono textarea + hint ───────────
+            // ─── Body: mono textarea + hint ───────────────────────────
             ColumnLayout {
                 id: bodyPanel
                 objectName: "apiBodyPanel"
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: apiTabs.bottom
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: Theme.spacingMd
+                anchors.rightMargin: Theme.spacingMd
+                anchors.topMargin: Theme.spacingMd
+                anchors.bottomMargin: Theme.spacingMd
                 visible: reqRoot.tabIndex === 2
                 spacing: Theme.spacingSm
-
-                UiSegmented {
-                    id: bodyModeSeg
-                    objectName: "apiBodyMode"
-                    model: ["None", "JSON", "Form"]
-                    currentIndex: reqRoot.bodyModeIndex()
-                    enabled: !reqRoot.sending
-                    onActivated: function (index) { reqRoot.selectBodyMode(index) }
-                }
 
                 ScrollView {
                     Layout.fillWidth: true
@@ -988,22 +1161,20 @@ Item {
                 }
             }
 
-            // ─── Auth: mode segmented + token / user+pass + hint ────────
+            // ─── Auth: token / user+pass + hint ────────────────────────
             ColumnLayout {
                 id: authPanel
                 objectName: "apiAuthPanel"
-                anchors.fill: parent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.top: apiTabs.bottom
+                anchors.bottom: parent.bottom
+                anchors.leftMargin: Theme.spacingMd
+                anchors.rightMargin: Theme.spacingMd
+                anchors.topMargin: Theme.spacingMd
+                anchors.bottomMargin: Theme.spacingMd
                 visible: reqRoot.tabIndex === 3
                 spacing: Theme.spacingSm
-
-                UiSegmented {
-                    id: authModeSeg
-                    objectName: "apiAuthMode"
-                    model: ["None", "Bearer", "Basic"]
-                    currentIndex: reqRoot.authTypeIndex()
-                    enabled: !reqRoot.sending
-                    onActivated: function (index) { reqRoot.selectAuthType(index) }
-                }
 
                 // The auth fields rebuild every time the tab opens (the
                 // Loader keys on the active tab): their bindings read
@@ -1085,6 +1256,30 @@ Item {
         }
     }
 
+    // Response panel: bottom half of the split, driven by responseState.
+    ApiResponsePanel {
+        id: responsePanel
+        objectName: "apiResponsePanel"
+        anchors.left: splitArea.left
+        anchors.right: splitArea.right
+        anchors.top: requestColumn.bottom
+        anchors.topMargin: Theme.spacingMd
+        anchors.bottom: splitArea.bottom
+        phase: reqRoot.responseState
+        status: reqRoot.response ? (reqRoot.response.status || 0) : 0
+        reason: reqRoot.response ? (reqRoot.response.reason || "") : ""
+        elapsedMs: reqRoot.response ? (reqRoot.response.ms || 0) : 0
+        bodySize: reqRoot.response ? (reqRoot.response.size || 0) : 0
+        body: reqRoot.response ? (reqRoot.response.body || "") : ""
+        headers: reqRoot.response ? (reqRoot.response.headers || []) : []
+        errorText: reqRoot.responseError
+        host: reqRoot.responseHost
+        onCopyRequested: function (text) {
+            if (reqRoot.svc)
+                reqRoot.svc.copyToClipboard(text)
+        }
+    }
+
     // Save dialog — the design's first-save flow: suggest a name from
     // method+path, pick a project, preview method+url. Confirm persists
     // through doSave().
@@ -1142,8 +1337,15 @@ Item {
 
         onOpened: saveNameField.forceActiveFocus()
 
+        // Height must stay implicit so AppDialog can size to content
+        // (dialogHeight is unset): anchors.fill would bind this item's height
+        // to the host that AppDialog sizes *from* this item, collapsing the
+        // content band to the bare padding and drawing the fields over the
+        // separator and the footer. Width still follows the host.
         ColumnLayout {
-            anchors.fill: parent
+            anchors.left: parent.left
+            anchors.right: parent.right
+            anchors.top: parent.top
             spacing: Theme.spacingSm
 
             Label {

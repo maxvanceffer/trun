@@ -163,6 +163,13 @@ Popup {
         }
 
         // ---- content ----
+        // Sizing contract: with dialogHeight unset this band is as tall as the
+        // content's own implicit height, so everything declared in the default
+        // slot must carry one. A child anchored to fill this host
+        // (anchors.fill: parent) instead sizes *from* the host and collapses
+        // the band to the bare padding — declare it with left/right/top, or
+        // give the dialog a fixed dialogHeight (as the import and environments
+        // dialogs do).
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: root.dialogHeight > 0

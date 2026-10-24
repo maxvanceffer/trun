@@ -109,6 +109,26 @@ leftovers from old markup; in new and edited code the status comes from the tabl
 not copied from a neighboring line. The platform chrome — the macOS window buttons
 in `TrafficLights.qml` — is not subject to the table.
 
+### Code
+
+A read-only code/JSON viewer (the R6 response body) is the one place where a
+syntax palette exists. It is still the same table, not a new one: the
+tokenizer in `qml/JsonFormat.js` produces classes and the caller supplies the
+colors — currently `qml/ApiResponsePanel.qml`.
+
+| Syntax token class | Token |
+|---|---|
+| object key (`"key":`) | `Theme.textPrimary` |
+| string value | `Theme.primary` |
+| number | `Theme.info` |
+| keyword (`true` / `false` / `null`) | `Theme.error` |
+| punctuation (`{}[]:,`) and the line-number gutter | `Theme.textSubtle` |
+| plain text (a non-JSON body) and whitespace | `Theme.textMuted` |
+
+The font is `Theme.fontMono`; the gutter is padded in `JsonFormat.js` so the
+mono line numbers right-align without a second layout. Highlight colors are
+passed in as strings, since `Text` rich text needs a CSS color.
+
 ### Chrome and geometry
 
 | Case | Value |

@@ -89,6 +89,8 @@ qt_add_qml_module(trun-app
         qml/DockerPage.qml
         qml/ApiPage.qml
         qml/ApiRequestPage.qml
+        qml/ApiResponsePanel.qml
+        qml/JsonFormat.js
         qml/EnvironmentsDialog.qml
         qml/BusyLabel.qml
         qml/Spinner.qml
@@ -238,6 +240,7 @@ target_link_libraries(qmltests PRIVATE
     Qt6::Core
     Qt6::Qml
     Qt6::Test
+    Qt6::Network
 )
 
 install(TARGETS trun-app

@@ -549,6 +549,13 @@ Rectangle {
         // unconditionally for the same reason as the databases one).
         if (crumbApiLabel)
             controls.push(crumbApiLabel)
+        // Request-page Save tail (R6): the button lives in the title-bar
+        // strip too, so without this the native drag region swallows its
+        // click (titleBar in main.qml sits above the whole header). Marked
+        // unconditionally — the hit test re-reads visibility and geometry on
+        // every press, so registering it while hidden is fine.
+        if (headerSaveButton)
+            controls.push(headerSaveButton)
         for (var j = 0; j < controls.length; ++j) {
             if (controls[j])
                 agent.setHitTestVisible(controls[j], true)
@@ -1069,12 +1076,12 @@ Rectangle {
                 // Right tail of the breadcrumb row: the request page's
                 // "unsaved changes · Save" (the design's request row was
                 // ← Back · crumbs · unsaved changes · Save — the crumbs and
-                // the tail both live in the header). Visible while a request
-                // is open and there is something to save; drafts are always
-                // unsaved, a saved request only after an edit.
+                // the tail both live in the header). Visible only while the
+                // API page is active and there is something to save; drafts
+                // are always unsaved, a saved request only after an edit.
                 RowLayout {
                     objectName: "headerSaveTail"
-                    visible: apiPage.requestUnsaved
+                    visible: dashboard.activePage === "api" && apiPage.requestUnsaved
                     spacing: Theme.spacingSm
                     Layout.alignment: Qt.AlignVCenter
 
@@ -1086,6 +1093,7 @@ Rectangle {
                     }
 
                     UiButton {
+                        id: headerSaveButton
                         objectName: "headerSaveButton"
                         label: apiPage.requestSaveLabel
                         color: "neutral"

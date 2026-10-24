@@ -20,6 +20,7 @@
 #include <QRegularExpression>
 #include <QFileInfo>
 #include <QTextStream>
+#include <QTextDocument>
 #include <QColor>
 #include <QScopedPointer>
 
@@ -1445,6 +1446,27 @@ void QmlTests::test_api_import_curl()
     QCOMPARE(reloaded.requests().size(), 3);
     QCOMPARE(reloaded.requests().at(0).toMap().value(QStringLiteral("url")).toString(),
              r.value(QStringLiteral("url")).toString());
+
+    // R8 — curl -k: the TLS opt-out is no longer dropped with the other
+    // boolean flags. It is a per-request field, off by default.
+    QCOMPARE(r.value(QStringLiteral("insecure")).toBool(), false);
+    QVERIFY(!svc.importCurl(QStringLiteral("curl -k https://self-signed.test/a")).isEmpty());
+    QCOMPARE(svc.requests().at(3).toMap().value(QStringLiteral("insecure")).toBool(), true);
+    // Combined short flags (-sk) and the long form both count.
+    QVERIFY(!svc.importCurl(QStringLiteral("curl -skS https://self-signed.test/b")).isEmpty());
+    QCOMPARE(svc.requests().at(4).toMap().value(QStringLiteral("insecure")).toBool(), true);
+    QVERIFY(!svc.importCurl(QStringLiteral("curl --insecure https://self-signed.test/c")).isEmpty());
+    QCOMPARE(svc.requests().at(5).toMap().value(QStringLiteral("insecure")).toBool(), true);
+    // A command without them stays verifying, and the flag survives a reload.
+    QVERIFY(!svc.importCurl(QStringLiteral("curl https://plain.test/d")).isEmpty());
+    QCOMPARE(svc.requests().at(6).toMap().value(QStringLiteral("insecure")).toBool(), false);
+    ApiService reloaded2(&settings);
+    reloaded2.ensureLoaded();
+    QCOMPARE(reloaded2.requests().size(), 7);
+    QCOMPARE(reloaded2.requests().at(3).toMap().value(QStringLiteral("insecure")).toBool(),
+             true);
+    QCOMPARE(reloaded2.requests().at(6).toMap().value(QStringLiteral("insecure")).toBool(),
+             false);
 }
 
 // T4: the history slice is read-only for the list; Clear must drop every
@@ -1506,6 +1528,11 @@ void QmlTests::test_api_draft_save()
              QStringLiteral("none"));
     QCOMPARE(draft.value(QStringLiteral("lastStatus")).toInt(), 0);
     QVERIFY(!draft.value(QStringLiteral("updatedAt")).toString().isEmpty());
+    // R8: the per-request TLS opt-out is part of the request shape, off by
+    // default. contains() guards the key itself — a misspelled write would
+    // read back as false and slip past the value check below.
+    QVERIFY(draft.contains(QStringLiteral("insecure")));
+    QCOMPARE(draft.value(QStringLiteral("insecure")).toBool(), false);
 
     // A running-server "Open →" pastes its URL into the same draft.
     QCOMPARE(svc.makeDraft(QStringLiteral("http://localhost:5173/"))
@@ -1537,6 +1564,10 @@ void QmlTests::test_api_draft_save()
              QStringLiteral("Untitled request"));
     QCOMPARE(reloaded.requests().at(0).toMap().value(QStringLiteral("params")).toList().size(),
              0);
+    // R8: the flag round-trips through Settings like the rest of the shape.
+    QVERIFY(reloaded.requests().at(0).toMap().contains(QStringLiteral("insecure")));
+    QCOMPARE(reloaded.requests().at(0).toMap().value(QStringLiteral("insecure")).toBool(),
+             false);
 }
 
 // R2: Save on an existing request = update (rename + edited fields) — the same
@@ -1692,8 +1723,10 @@ class FakeApiService : public QObject {
     Q_PROPERTY(QVariantList history READ history NOTIFY historyChanged)
     Q_PROPERTY(QVariantList environments READ environments NOTIFY environmentsChanged)
     Q_PROPERTY(QString activeEnvId READ activeEnvId NOTIFY activeEnvIdChanged)
+    Q_PROPERTY(bool sending READ sending NOTIFY sendingChanged)
 
 public:
+    bool sending() const { return m_sending; }
     QVariantList requests() const { return m_requests; }
     QVariantList history() const { return m_history; }
     QVariantList environments() const { return m_envs; }
@@ -1769,18 +1802,82 @@ public:
     }
     Q_INVOKABLE bool clearHistory() { return true; }
 
+    // ── Send slice (R6) ────────────────────────────────────────────────
+    Q_INVOKABLE bool send(const QVariantMap &spec)
+    {
+        if (m_sending)
+            return false;
+        m_lastSpec = spec;
+        m_sendCount++;
+        m_sending = true;
+        emit sendingChanged();
+        return true;
+    }
+    Q_INVOKABLE void cancel()
+    {
+        if (!m_sending)
+            return;
+        m_sending = false;
+        emit sendingChanged();
+        emit sendFinished(QVariantMap{
+            {QStringLiteral("canceled"), true},
+            {QStringLiteral("ok"), false},
+        });
+    }
+    Q_INVOKABLE bool updateRequestStatus(const QString &id, int status)
+    {
+        m_lastStatusId = id;
+        m_lastStatus = status;
+        return !id.isEmpty();
+    }
+    Q_INVOKABLE void appendHistory(const QVariantMap &entry)
+    {
+        m_lastHistory = entry;
+        m_history.prepend(entry);
+        emit historyChanged();
+    }
+    Q_INVOKABLE bool copyToClipboard(const QString &text)
+    {
+        m_copied = text;
+        return true;
+    }
+
+    // Test driver: deliver a finished send to the pane (mirrors the C++
+    // worker's queued result) and expose what the pane routed back.
+    void finishSend(const QVariantMap &result)
+    {
+        m_sending = false;
+        emit sendingChanged();
+        emit sendFinished(result);
+    }
+    QVariantMap lastSpec() const { return m_lastSpec; }
+    int sendCount() const { return m_sendCount; }
+    QString lastStatusId() const { return m_lastStatusId; }
+    int lastStatus() const { return m_lastStatus; }
+    QVariantMap lastHistory() const { return m_lastHistory; }
+    QString copied() const { return m_copied; }
+
 signals:
     void requestsChanged();
     void historyChanged();
     void environmentsChanged();
     void activeEnvIdChanged();
     void errorMessage(const QString &message);
+    void sendingChanged();
+    void sendFinished(const QVariantMap &result);
 
 private:
     QVariantList m_requests;
     QVariantList m_history;
     QVariantList m_envs;
     QString m_active;
+    bool m_sending = false;
+    QVariantMap m_lastSpec;
+    int m_sendCount = 0;
+    QString m_lastStatusId;
+    int m_lastStatus = 0;
+    QVariantMap m_lastHistory;
+    QString m_copied;
 };
 
 class FakeProjectServiceForApi : public QObject {
@@ -1813,6 +1910,23 @@ public:
 
 signals:
     void detectedPortsChanged();
+};
+
+// Stand-in for QWindowKit's WindowAgent: the real one owns the native
+// title-bar drag region and only lets a click through to QML controls that
+// were handed to it via setHitTestVisible(). Records what it was given so a
+// test can assert the header's interactive controls are registered.
+class FakeWindowAgent : public QObject {
+    Q_OBJECT
+
+public:
+    QList<QObject *> visibleItems;
+
+    Q_INVOKABLE void setHitTestVisible(QObject *item, bool visible = true)
+    {
+        if (visible && !visibleItems.contains(item))
+            visibleItems.append(item);
+    }
 };
 
 // T4: the list is pure QML over the service slices. Pins the grouping
@@ -2296,6 +2410,68 @@ void QmlTests::test_api_request_urlbar()
     QCOMPARE(cancelBtn->property("visible").toBool(), false);
     QCOMPARE(urlField->property("enabled").toBool(), true);
 
+    // R8 — curl -k: the checkbox mirrors the request map, writes the flag back
+    // and marks the request dirty; the flag then travels to the service in the
+    // spec (C++ turns it into an unverified handshake in the send worker).
+    auto *insecureCheck =
+        pane->findChild<QQuickItem *>(QStringLiteral("apiInsecureCheck"));
+    QVERIFY(insecureCheck);
+    QCOMPARE(insecureCheck->property("checked").toBool(), false);
+    QCOMPARE(api.lastSpec().value(QStringLiteral("insecure")).toBool(), false);
+
+    // The box's `checked` is bound from above (UiCheckBox's contract), so the
+    // toggle comes back through the toggled signal. dirty is reset first to
+    // prove the write marks the request.
+    pane->setProperty("dirty", false);
+    QVERIFY(QMetaObject::invokeMethod(insecureCheck, "toggled", Q_ARG(bool, true)));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("insecure").toBool(), true);
+    QCOMPARE(insecureCheck->property("checked").toBool(), true);
+    QCOMPARE(pane->property("dirty").toBool(), true);
+    QCOMPARE(pane->property("requestMap").value<QVariantMap>()
+                 .value(QStringLiteral("insecure")).toBool(),
+             true);
+
+    QVERIFY(QMetaObject::invokeMethod(pane, "startSend"));
+    QTest::qWait(20);
+    QCOMPARE(api.lastSpec().value(QStringLiteral("insecure")).toBool(), true);
+    // Same lock as the URL field while a send is in flight.
+    QCOMPARE(insecureCheck->property("enabled").toBool(), false);
+    QVERIFY(QMetaObject::invokeMethod(pane, "cancelSend"));
+    QTest::qWait(20);
+    QCOMPARE(insecureCheck->property("enabled").toBool(), true);
+
+    // Toggling back off writes the flag and the mirror, so the reopen below
+    // is discriminating.
+    QVERIFY(QMetaObject::invokeMethod(insecureCheck, "toggled", Q_ARG(bool, false)));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("insecure").toBool(), false);
+    QCOMPARE(pane->property("requestMap").value<QVariantMap>()
+                 .value(QStringLiteral("insecure")).toBool(),
+             false);
+
+    // Reopening a saved request that carries the flag comes back ticked, not
+    // dirty — the box reads the page mirror seeded by openWith, not the map
+    // directly (a QML-var field write never re-evaluates the binding).
+    QVariantMap stored = api.makeDraft(QStringLiteral("https://self-signed.test/a"));
+    stored.insert(QStringLiteral("id"), QStringLiteral("stored-1"));
+    stored.insert(QStringLiteral("insecure"), true);
+    QVERIFY(QMetaObject::invokeMethod(pane, "openWith", Q_ARG(QVariant, QVariant(stored)),
+                                      Q_ARG(QVariant, true)));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("insecure").toBool(), true);
+    QCOMPARE(insecureCheck->property("checked").toBool(), true);
+    QCOMPARE(pane->property("dirty").toBool(), false);
+
+    // …and one that never opted out opens unticked.
+    QVariantMap plain = api.makeDraft(QStringLiteral("http://localhost:5173/"));
+    plain.insert(QStringLiteral("id"), QStringLiteral("stored-2"));
+    QVERIFY(QMetaObject::invokeMethod(pane, "openWith", Q_ARG(QVariant, QVariant(plain)),
+                                      Q_ARG(QVariant, true)));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("insecure").toBool(), false);
+    QCOMPARE(insecureCheck->property("checked").toBool(), false);
+
     delete obj;
 }
 
@@ -2619,19 +2795,38 @@ void QmlTests::test_header_save_tail()
     QCOMPARE(hint->property("visible").toBool(), false);
     QCOMPARE(saveButton->property("visible").toBool(), false);
 
-    // Open a draft: drafts are always unsaved -> the tail appears, the
-    // button carries the Lucide save icon (themed through Theme.icon).
+    // Open a draft: drafts are always unsaved. The tail belongs to the API
+    // page, so it stays hidden while another page is active.
     QQuickItem *apiPage = dashboard->findChild<QQuickItem *>("apiPage");
     QVERIFY(apiPage != nullptr);
     QVERIFY(QMetaObject::invokeMethod(apiPage, "openDraft",
         Q_ARG(QVariant, QStringLiteral("http://localhost:8000/"))));
     QVERIFY(apiPage->property("requestOpen").toBool());
     QTest::qWait(50);
+    QCOMPARE(dashboard->property("activePage").toString(), QStringLiteral("dashboard"));
+    QCOMPARE(tail->property("visible").toBool(), false);
+    QCOMPARE(saveButton->property("visible").toBool(), false);
+
+    // Navigate to the API page: the tail appears, the button carries the
+    // Lucide save icon (themed through Theme.icon).
+    QVERIFY(dashboard->setProperty("activePage", QStringLiteral("api")));
+    QTest::qWait(50);
     QCOMPARE(tail->property("visible").toBool(), true);
     QCOMPARE(hint->property("visible").toBool(), true);
     QCOMPARE(saveButton->property("visible").toBool(), true);
     QVERIFY(saveButton->property("enabled").toBool());
     QVERIFY(!saveButton->property("leadingIconSource").toUrl().isEmpty());
+
+    // The header strip doubles as main.qml's native drag region: QWindowKit
+    // only forwards a press to QML when the control was registered with
+    // setHitTestVisible(). Regression guard — the R6 tail shipped without
+    // this, so the button looked live but the drag region ate every click.
+    FakeWindowAgent agent;
+    QVariant agentVar = QVariant::fromValue(static_cast<QObject *>(&agent));
+    QVERIFY(QMetaObject::invokeMethod(dashboard, "markHitTest",
+        Q_ARG(QVariant, agentVar)));
+    QVERIFY2(agent.visibleItems.contains(saveButton),
+        "headerSaveButton was not handed to the window agent's hit test");
 
     // Clicking the header button must reach the pane's save(): the save
     // dialog cannot open on a bare QQuickWindow (Popup needs the overlay), so
@@ -2645,6 +2840,18 @@ void QmlTests::test_header_save_tail()
     QVERIFY(dialogName != nullptr);
     QCOMPARE(dialogName->property("text").toString(), QStringLiteral("GET /"));
 
+    // The dialog is content-sized (dialogHeight is unset), so its content band
+    // is only as tall as the content declares itself to be. Regression guard:
+    // content anchored to fill that host sizes *from* it instead, collapsing
+    // the band to the bare padding and painting the fields over the separator
+    // and the footer — which also squashed the whole box (min(implicitHeight,
+    // …) drops to the collapsed value).
+    QQuickItem *saveContent = dialogName->parentItem();
+    QVERIFY(saveContent != nullptr);
+    QVERIFY2(saveContent->height() + 0.5 >= saveContent->implicitHeight(),
+        qPrintable(QStringLiteral("save dialog content collapsed (height=%1, implicitHeight=%2)")
+                       .arg(saveContent->height()).arg(saveContent->implicitHeight())));
+
     // Confirm through the dialog persists the draft; once saved clean the
     // tail collapses even though the request stays open.
     QVERIFY(QMetaObject::invokeMethod(saveDialog, "confirmSave"));
@@ -2653,6 +2860,255 @@ void QmlTests::test_header_save_tail()
     QCOMPARE(api.requests().size(), 1);
     QCOMPARE(tail->property("visible").toBool(), false);
     QCOMPARE(saveButton->property("visible").toBool(), false);
+
+    delete obj;
+}
+
+// R6: the response panel. The pane hands sendSpec() to the service and the
+// panel renders four phases off `sending` + the last reply. The fake records
+// the spec and replays a queued result (finishSend), so this covers the whole
+// QML half of the Send slice without a socket: phase transitions (empty ->
+// loading -> success/error), the status pill + time/size labels, the
+// masked-URL history write, JSON pretty-print + highlight + gutter, the
+// Body/Headers tabs, Copy routing to the service, the 4xx-is-a-reply rule and
+// the band/formatter helpers.
+void QmlTests::test_api_response_panel()
+{
+    QQmlEngine engine;
+    engine.rootContext()->setContextProperty("logModel", g_logModel);
+    const QString buildDir = QDir::currentPath();
+    engine.rootContext()->setContextProperty(
+        "iconBaseUrl", QUrl::fromLocalFile(buildDir + "/icons/").toString());
+
+    FakeApiService api;
+    api.setEnvironments(QVariantList{
+        QVariantMap{
+            {QStringLiteral("id"), QStringLiteral("local")},
+            {QStringLiteral("name"), QStringLiteral("local")},
+            {QStringLiteral("vars"), QVariantList{
+                QVariantMap{
+                    {QStringLiteral("name"), QStringLiteral("baseUrl")},
+                    {QStringLiteral("value"), QStringLiteral("http://localhost:8000")},
+                    {QStringLiteral("secret"), false},
+                },
+                QVariantMap{
+                    {QStringLiteral("name"), QStringLiteral("token")},
+                    {QStringLiteral("value"), QString()},
+                    {QStringLiteral("secret"), true},
+                    {QStringLiteral("hasSavedValue"), true},
+                },
+            }},
+        },
+    });
+    api.setActiveEnvId(QStringLiteral("local"));
+    engine.rootContext()->setContextProperty("apiService", &api);
+
+    FakeProjectServiceForApi proj;
+    proj.setProjects(QVariantList{
+        QVariantMap{{QStringLiteral("id"), QStringLiteral("p/one")},
+                    {QStringLiteral("name"), QStringLiteral("personizely-backend")}}});
+    engine.rootContext()->setContextProperty("projectService", &proj);
+
+    FakeDashboardForApi dash;
+    engine.rootContext()->setContextProperty("dashboard", &dash);
+
+    QQmlComponent component(&engine,
+        QUrl::fromLocalFile(sourceQmlPath("ApiPage.qml")));
+    QVERIFY2(component.isReady(), qPrintable(component.errors().isEmpty()
+        ? QString("not ready") : component.errors().first().toString()));
+
+    QQuickWindow window;
+    window.resize(1000, 800);
+    QObject *obj = component.createWithInitialProperties({}, engine.rootContext());
+    QVERIFY(obj != nullptr);
+    auto *page = qobject_cast<QQuickItem *>(obj);
+    QVERIFY(page != nullptr);
+    page->setParentItem(window.contentItem());
+    page->setPosition(QPointF(0, 0));
+    page->setSize(QSizeF(1000, 800));
+    window.show();
+    QVERIFY(QTest::qWaitForWindowExposed(&window));
+    QTest::qWait(50);
+
+    QVERIFY(QMetaObject::invokeMethod(page, "openDraft",
+        Q_ARG(QVariant, QStringLiteral("{{baseUrl}}/api/{{token}}/campaigns"))));
+    QVERIFY(page->property("requestOpen").toBool());
+    QTest::qWait(50);
+
+    QQuickItem *pane = page->findChild<QQuickItem *>(QStringLiteral("apiRequestPage"));
+    QVERIFY(pane != nullptr);
+    QQuickItem *panel = pane->findChild<QQuickItem *>(QStringLiteral("apiResponsePanel"));
+    QVERIFY(panel != nullptr);
+    QQuickItem *emptyHint = panel->findChild<QQuickItem *>(QStringLiteral("apiResponseEmpty"));
+    QVERIFY(emptyHint != nullptr);
+
+    // Untouched: empty.
+    QCOMPARE(panel->property("phase").toString(), QStringLiteral("empty"));
+    QCOMPARE(emptyHint->property("visible").toBool(), true);
+
+    // startSend -> the service records the spec and the panel goes loading.
+    QVERIFY(QMetaObject::invokeMethod(pane, "startSend"));
+    QTest::qWait(20);
+    QCOMPARE(api.sendCount(), 1);
+    QCOMPARE(pane->property("sending").toBool(), true);
+    QCOMPARE(panel->property("phase").toString(), QStringLiteral("loading"));
+    const QVariantMap spec = api.lastSpec();
+    QCOMPARE(spec.value(QStringLiteral("method")).toString(), QStringLiteral("GET"));
+    QCOMPARE(spec.value(QStringLiteral("url")).toString(),
+             QStringLiteral("{{baseUrl}}/api/{{token}}/campaigns"));
+    QCOMPARE(spec.value(QStringLiteral("envId")).toString(), QStringLiteral("local"));
+
+    // Cancel -> nothing changes but the spinner stops; no history.
+    QVERIFY(QMetaObject::invokeMethod(pane, "cancelSend"));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("sending").toBool(), false);
+    QCOMPARE(panel->property("phase").toString(), QStringLiteral("empty"));
+    QCOMPARE(api.history().size(), 0);
+
+    // A real reply: 201 Created, a JSON body, one header.
+    QVERIFY(QMetaObject::invokeMethod(pane, "startSend"));
+    QTest::qWait(20);
+    api.finishSend(QVariantMap{
+        {QStringLiteral("ok"), true},
+        {QStringLiteral("canceled"), false},
+        {QStringLiteral("status"), 201},
+        {QStringLiteral("reason"), QStringLiteral("Created")},
+        {QStringLiteral("ms"), 128},
+        {QStringLiteral("size"), 1536},
+        {QStringLiteral("headers"), QVariantList{QVariantMap{
+            {QStringLiteral("name"), QStringLiteral("content-type")},
+            {QStringLiteral("value"), QStringLiteral("application/json")}}}},
+        {QStringLiteral("body"), QStringLiteral("{\"a\":1}")},
+        {QStringLiteral("host"), QStringLiteral("localhost")},
+        {QStringLiteral("error"), QString()},
+        {QStringLiteral("errorCode"), 0},
+    });
+    QTest::qWait(20);
+    QCOMPARE(pane->property("sending").toBool(), false);
+    QCOMPARE(panel->property("phase").toString(), QStringLiteral("success"));
+
+    QQuickItem *pill = panel->findChild<QQuickItem *>(QStringLiteral("apiStatusPill"));
+    QVERIFY(pill != nullptr);
+    QCOMPARE(pill->property("label").toString(), QStringLiteral("201 Created"));
+    QQuickItem *timeLabel = panel->findChild<QQuickItem *>(QStringLiteral("apiResponseTime"));
+    QVERIFY(timeLabel != nullptr);
+    QCOMPARE(timeLabel->property("text").toString(), QStringLiteral("128 ms"));
+    QQuickItem *sizeLabel = panel->findChild<QQuickItem *>(QStringLiteral("apiResponseSize"));
+    QVERIFY(sizeLabel != nullptr);
+    QCOMPARE(sizeLabel->property("text").toString(), QStringLiteral("1.5 KB"));
+
+    // History stores the masked resolved URL (the real one never leaves C++);
+    // the draft id is "" so updateRequestStatus is a no-op.
+    QCOMPARE(api.lastHistory().value(QStringLiteral("status")).toInt(), 201);
+    QCOMPARE(api.lastHistory().value(QStringLiteral("url")).toString(),
+             QStringLiteral("http://localhost:8000/api/\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022/campaigns"));
+    QCOMPARE(api.lastHistory().value(QStringLiteral("method")).toString(),
+             QStringLiteral("GET"));
+
+    // JSON is pretty-printed with a line-number gutter and highlight spans.
+    QQuickItem *gutter = panel->findChild<QQuickItem *>(QStringLiteral("apiResponseGutter"));
+    QVERIFY(gutter != nullptr);
+    QCOMPARE(gutter->property("text").toString(), QStringLiteral("1\n2\n3"));
+    QQuickItem *code = panel->findChild<QQuickItem *>(QStringLiteral("apiResponseCode"));
+    QVERIFY(code != nullptr);
+    QVERIFY(code->property("text").toString().contains(QStringLiteral("<span")));
+    // The render, not just the string: the panel draws `code` as RichText, and
+    // Qt's rich text follows HTML whitespace rules — a string-only assertion
+    // passed while the panel showed the body on one unindented line. Parse the
+    // panel's own text with QTextDocument, the engine behind QQuickText: both
+    // the line breaks and the two-space indent of line 2 must survive.
+    QCOMPARE(gutter->property("lineCount").toInt(), 3);
+    QTextDocument rendered;
+    rendered.setHtml(code->property("text").toString());
+    QCOMPARE(rendered.toPlainText(), QStringLiteral("{\n  \"a\": 1\n}"));
+    // The gutter is PlainText, so both Texts must lay out to the same height
+    // for the columns to stay aligned.
+    QCOMPARE(code->property("implicitHeight").toDouble(),
+             gutter->property("implicitHeight").toDouble());
+
+    // Headers tab.
+    QQuickItem *tabs = panel->findChild<QQuickItem *>(QStringLiteral("apiResponseTabs"));
+    QVERIFY(tabs != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(tabs, "activated", Q_ARG(int, 1)));
+    QTest::qWait(20);
+    QCOMPARE(panel->property("responseTab").toInt(), 1);
+    QQuickItem *headers = panel->findChild<QQuickItem *>(QStringLiteral("apiResponseHeaders"));
+    QVERIFY(headers != nullptr);
+    QCOMPARE(headers->property("visible").toBool(), true);
+
+    // Copy follows the visible tab (Headers -> lines), then the Body.
+    QQuickItem *copyBtn = panel->findChild<QQuickItem *>(QStringLiteral("apiResponseCopy"));
+    QVERIFY(copyBtn != nullptr);
+    QVERIFY(QMetaObject::invokeMethod(copyBtn, "clicked"));
+    QTest::qWait(20);
+    QCOMPARE(api.copied(), QStringLiteral("content-type: application/json"));
+    QVERIFY(QMetaObject::invokeMethod(tabs, "activated", Q_ARG(int, 0)));
+    QTest::qWait(20);
+    QVERIFY(QMetaObject::invokeMethod(copyBtn, "clicked"));
+    QTest::qWait(20);
+    QCOMPARE(api.copied(), QStringLiteral("{\"a\":1}"));
+
+    // 4xx is a reply, not an error: still success, pill goes warning.
+    QVERIFY(QMetaObject::invokeMethod(pane, "startSend"));
+    api.finishSend(QVariantMap{
+        {QStringLiteral("ok"), true},
+        {QStringLiteral("canceled"), false},
+        {QStringLiteral("status"), 404},
+        {QStringLiteral("reason"), QStringLiteral("Not Found")},
+        {QStringLiteral("ms"), 12},
+        {QStringLiteral("size"), 0},
+        {QStringLiteral("headers"), QVariantList{}},
+        {QStringLiteral("body"), QString()},
+        {QStringLiteral("host"), QStringLiteral("localhost")},
+    });
+    QTest::qWait(20);
+    QCOMPARE(panel->property("phase").toString(), QStringLiteral("success"));
+    QCOMPARE(pill->property("label").toString(), QStringLiteral("404 Not Found"));
+    QCOMPARE(pill->property("color").toString(), QStringLiteral("warning"));
+
+    // Band mapping + formatters.
+    QVariant out;
+    QVERIFY(QMetaObject::invokeMethod(panel, "statusColor", Q_RETURN_ARG(QVariant, out),
+                                      Q_ARG(QVariant, 200)));
+    QCOMPARE(out.toString(), QStringLiteral("success"));
+    QVERIFY(QMetaObject::invokeMethod(panel, "statusColor", Q_RETURN_ARG(QVariant, out),
+                                      Q_ARG(QVariant, 301)));
+    QCOMPARE(out.toString(), QStringLiteral("info"));
+    QVERIFY(QMetaObject::invokeMethod(panel, "statusColor", Q_RETURN_ARG(QVariant, out),
+                                      Q_ARG(QVariant, 500)));
+    QCOMPARE(out.toString(), QStringLiteral("error"));
+    QVERIFY(QMetaObject::invokeMethod(panel, "formatSize", Q_RETURN_ARG(QVariant, out),
+                                      Q_ARG(QVariant, 512)));
+    QCOMPARE(out.toString(), QStringLiteral("512 B"));
+    QVERIFY(QMetaObject::invokeMethod(panel, "formatMs", Q_RETURN_ARG(QVariant, out),
+                                      Q_ARG(QVariant, 2500)));
+    QCOMPARE(out.toString(), QStringLiteral("2.50 s"));
+
+    // Network error -> error phase, host + message, no history write.
+    const int historyBefore = api.history().size();
+    QVERIFY(QMetaObject::invokeMethod(pane, "startSend"));
+    api.finishSend(QVariantMap{
+        {QStringLiteral("ok"), false},
+        {QStringLiteral("canceled"), false},
+        {QStringLiteral("status"), 0},
+        {QStringLiteral("reason"), QString()},
+        {QStringLiteral("ms"), 5},
+        {QStringLiteral("size"), 0},
+        {QStringLiteral("headers"), QVariantList{}},
+        {QStringLiteral("body"), QString()},
+        {QStringLiteral("host"), QStringLiteral("nope.example")},
+        {QStringLiteral("error"), QStringLiteral("Host not found")},
+        {QStringLiteral("errorCode"), 3},
+    });
+    QTest::qWait(20);
+    QCOMPARE(panel->property("phase").toString(), QStringLiteral("error"));
+    QQuickItem *err = panel->findChild<QQuickItem *>(QStringLiteral("apiResponseError"));
+    QVERIFY(err != nullptr);
+    QCOMPARE(err->property("visible").toBool(), true);
+    QQuickItem *errMsg = panel->findChild<QQuickItem *>(QStringLiteral("apiResponseErrorMessage"));
+    QVERIFY(errMsg != nullptr);
+    QCOMPARE(errMsg->property("text").toString(), QStringLiteral("Host not found"));
+    QCOMPARE(api.history().size(), historyBefore);
 
     delete obj;
 }

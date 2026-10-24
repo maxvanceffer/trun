@@ -2,16 +2,24 @@ import QtQuick
 import QtQuick.Controls
 import "../"
 
-// UiTabs — tab bar after Nuxt UI v4 Tabs (pill variant, size md, color
-// neutral by default):
-//   /tmp/nuxt-ui/src/runtime/components/Tabs.vue
-//   /tmp/nuxt-ui/src/theme/tabs.ts
-// A rounded list plate (bg-elevated, rounded-lg, p-1), an animated thumb
-// behind the active trigger (the pill variant's indicator — 200ms
-// translate/width) and triggers that shift text-muted → text-default on
-// hover and to inverted ink while active. The optional per-item `badge`
-// renders as UiTag — Nuxt's default Tabs badge is
-// { size: 'sm', color: 'neutral', variant: 'outline' }.
+// UiTabs — tab bar after Nuxt UI v4 Tabs, `variant: link` (underline), md:
+//   /tmp/nuxt-ui/src/theme/tabs.ts   (v4.11.3)
+//   src/runtime/components/Tabs.vue
+// Words only — no pill plate, no thumb behind the label. A hairline track
+// (border-default, `list: 'border-b -mb-px'`) runs the full width of the
+// bar, and the active trigger is marked by a solid bar riding that track:
+// it animates position and width (Nuxt `indicator` +
+// `transition-[translate,width]`, eased with the kit's motion tokens).
+// The active label takes the same ink as the bar (link + color:
+// `data-[state=active]:text-<color>`); idle labels go text-muted and
+// brighten to text-default on hover. The per-item `badge` renders as UiTag
+// (Nuxt's default Tabs badge is
+// { size: 'sm', color: 'neutral', variant: 'outline' }).
+//
+// The right edge is a slot — Nuxt's `list-trailing` slot: anything declared
+// as a child of UiTabs is laid out in a row pinned to the right, always
+// space-between with the tabs. The request page drops the Body/Auth mode
+// switches there.
 //
 // items: [{ label: string, badge?: int }]; selection is currentIndex,
 // clicks emit activated(index). Arrow keys move the selection while the
@@ -22,22 +30,32 @@ FocusScope {
 
     property var items: []              // [{ label, badge? }]
     property int currentIndex: 0
-    // pill supports primary | neutral: only the thumb fill and the active
-    // label's inverted ink change (tabs.ts compoundVariants).
-    property string color: "neutral"
-    // Share the full width equally between triggers (wide bars).
-    property bool stretch: false
+    // link supports primary | neutral: only the marker's fill and the
+    // active label's ink change (tabs.ts compoundVariants).
+    property string color: "primary"
+    // Right-hand slot (Nuxt `list-trailing`): child items land in a row
+    // pinned to the right edge of the bar.
+    default property alias trailingData: trailingRow.data
 
     signal activated(int index)
 
-    readonly property color thumbColor:
-        root.color === "primary" ? Theme.accent : Theme.backgroundInverted
+    readonly property color markerColor:
+        root.color === "primary" ? Theme.primary : Theme.backgroundInverted
     readonly property color activeInk:
-        root.color === "primary" ? Theme.accentForeground : Theme.textInverted
+        root.color === "primary" ? Theme.primary : Theme.textPrimary
+
+    // Geometry. The trigger band sits on a 1px track; the marker is a
+    // 2px bar centred on that track (link's `-bottom-px h-px`, thickened).
+    readonly property int triggerGap: 24
+    readonly property int triggerH: 34
+    readonly property int trackH: 1
+    readonly property int markerH: 2
 
     activeFocusOnTab: true
-    implicitWidth: plate.implicitWidth
-    implicitHeight: plate.implicitHeight
+    implicitWidth: triggersRow.implicitWidth
+                   + (trailingRow.implicitWidth > 0
+                      ? root.triggerGap * 2 + trailingRow.implicitWidth : 0)
+    implicitHeight: root.triggerH + root.trackH
 
     function select(i) {
         if (i < 0 || i >= root.items.length || i === root.currentIndex)
@@ -49,41 +67,13 @@ FocusScope {
     Keys.onLeftPressed: root.select(root.currentIndex - 1)
     Keys.onRightPressed: root.select(root.currentIndex + 1)
 
-    // tabs.ts pill: list p-1, trigger px-3 py-1.5 text-sm gap-1.5 rounded-md.
-    // md text-sm lands at 32px with the kit's own scale (13px font).
-    readonly property int pad: 4
-    readonly property int triggerGap: 2
-    readonly property int triggerH: 32
-    readonly property int triggerPadX: 12
-
-    Rectangle {
-        id: plate
-        anchors.fill: parent
-        radius: Theme.radiusMd
-        color: Theme.backgroundElevated
-        implicitWidth: row.implicitWidth + root.pad * 2
-        implicitHeight: root.triggerH + root.pad * 2
-    }
-
-    Rectangle {
-        id: thumb
-        property Item target:
-            rep.count > root.currentIndex ? rep.itemAt(root.currentIndex) : null
-        x: root.pad + (target ? target.x : 0)
-        y: root.pad
-        width: target ? target.width : 0
-        height: root.triggerH
-        radius: Theme.radiusSm
-        color: root.thumbColor
-        Behavior on x     { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-        Behavior on width { NumberAnimation { duration: 200; easing.type: Easing.OutCubic } }
-    }
-
+    // Triggers, in words. No horizontal padding of their own: the marker
+    // is exactly as wide as the tab's content, and the first label lines
+    // up with whatever the host insets the bar by.
     Row {
-        id: row
-        x: root.pad
-        y: root.pad
-        width: root.stretch ? parent.width - root.pad * 2 : implicitWidth
+        id: triggersRow
+        x: 0
+        y: 0
         height: root.triggerH
         spacing: root.triggerGap
 
@@ -96,16 +86,13 @@ FocusScope {
                 required property int index
                 required property var modelData
 
-                implicitWidth: triggerRow.implicitWidth + root.triggerPadX * 2
-                width: root.stretch
-                    ? Math.max(0, (row.width - root.triggerGap * (rep.count - 1))
-                               / Math.max(1, rep.count))
-                    : implicitWidth
+                implicitWidth: triggerRow.implicitWidth
+                width: implicitWidth
                 height: root.triggerH
 
                 Row {
                     id: triggerRow
-                    anchors.centerIn: parent
+                    anchors.verticalCenter: parent.verticalCenter
                     spacing: 6
 
                     Label {
@@ -116,7 +103,9 @@ FocusScope {
                                                          : Theme.textMuted
                         font.pixelSize: Theme.fontSizeLg
                         font.weight: Font.Medium
-                        Behavior on color { ColorAnimation { duration: 120 } }
+                        Behavior on color {
+                            ColorAnimation { duration: Theme.animFast }
+                        }
                     }
 
                     UiTag {
@@ -142,13 +131,60 @@ FocusScope {
         }
     }
 
-    Rectangle {                              // focus ring
-        anchors.fill: parent
-        anchors.margins: -4
-        radius: Theme.radiusSm + 4
+    // Trailing slot: pinned right, centred in the trigger band. The gap to
+    // the last tab is whatever the bar's width leaves — space-between.
+    Row {
+        id: trailingRow
+        anchors.right: parent.right
+        anchors.verticalCenter: triggersRow.verticalCenter
+        spacing: Theme.spacingSm
+    }
+
+    Rectangle {                              // hairline track, full width
+        id: track
+        x: 0
+        y: root.triggerH
+        width: root.width
+        height: root.trackH
+        color: Theme.border
+    }
+
+    Rectangle {                              // active marker, on the track
+        id: marker
+        readonly property Item target:
+            rep.count > root.currentIndex ? rep.itemAt(root.currentIndex) : null
+        x: target ? target.x : 0
+        width: target ? target.width : 0
+        y: root.triggerH - (root.markerH - root.trackH)
+        height: root.markerH
+        radius: height / 2
+        color: root.markerColor
+        visible: !!target
+        Behavior on x {
+            NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard }
+        }
+        Behavior on width {
+            NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard }
+        }
+    }
+
+    Rectangle {                              // focus ring, around the active trigger
+        id: focusRing
+        readonly property Item target: marker.target
+        x: target ? target.x - 6 : 0
+        width: target ? target.width + 12 : 0
+        y: -4
+        height: root.triggerH + 8
+        radius: Theme.radiusSm
         color: "transparent"
         border.width: 2
         border.color: Theme.ring
-        visible: root.activeFocus
+        visible: root.activeFocus && !!target
+        Behavior on x {
+            NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard }
+        }
+        Behavior on width {
+            NumberAnimation { duration: Theme.animMedium; easing.type: Theme.easingStandard }
+        }
     }
 }
