@@ -1,13 +1,20 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "mcpServers": {
+  "mcp": {
     "qt-docs": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@modelcontextprotocol/server-fetch",
-        "https://doc.qt.io/"
-      ]
+      "type": "remote",
+      "url": "https://qt-docs-mcp.qt.io/mcp"
+    },
+    "servers": {
+      "nuxt-ui": {
+        "type": "local",
+        "command": [
+          "npx",
+          "-y",
+          "mcp-remote",
+          "https://ui.nuxt.com/mcp"
+        ]
+      }
     }
   },
   "permission": {
