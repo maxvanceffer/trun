@@ -25,6 +25,7 @@ Keychain (`src/mackeychain.h`, label like `trun.db.*` in
   "params": [{"name": "", "value": "", "enabled": true}],
   "body": "",
   "auth": {"type": "none"},
+  "insecure": false,
   "lastStatus": 200,
   "lastAt": "2026-10-06T12:00:00Z",
   "updatedAt": "2026-10-06T12:00:00Z"
@@ -40,6 +41,12 @@ Keychain (`src/mackeychain.h`, label like `trun.db.*` in
   decision: the list shows the last execution even before Save); content edits
   persist only on Save.
 - `method` — uppercase; `url` — raw, with `{{var}}` as is.
+- `insecure` — per-request TLS switch (R8), false unless the request opted out of
+  certificate verification the way `curl -k` does. It is a plain stored field:
+  `makeDraft` seeds `false`, the curl importer writes `true` for `-k` /
+  `--insecure`, and the send worker reads it (`QSslSocket::VerifyNone`); unknown
+  fields survive `loadRequests()`, so a request saved before R8 keeps working and
+  reads as `false`.
 
 ## Environment (global, one active)
 

@@ -1,12 +1,23 @@
 #include "apiservice.h"
 #include "settings.h"
 
+#include <QClipboard>
 #include <QDateTime>
+#include <QElapsedTimer>
+#include <QEventLoop>
+#include <QGuiApplication>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMetaObject>
+#include <QMutexLocker>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkRequest>
 #include <QSet>
 #include <QStringList>
+#include <QThread>
+#include <QUrl>
 #include <QUuid>
 
 #ifdef Q_OS_MAC
@@ -19,6 +30,8 @@ const QString kActiveKey = QStringLiteral("api/activeEnv");
 const QString kRequestsKey = QStringLiteral("api/requests");
 const QString kHistoryKey = QStringLiteral("api/history");
 const int kHistoryCap = 50;
+// R4/R6: the transfer-timeout default from the map.
+const int kTransferTimeoutMs = 30000;
 
 // Stored var shape: {name, value, secret, enabled, hasSavedValue}.
 // On macOS secret values never reach Settings (value is "").
@@ -266,8 +279,11 @@ void ApiService::load()
             const bool secret = o.value(QStringLiteral("secret")).toBool();
             const bool enabled = o.value(QStringLiteral("enabled")).toBool(true);
 #ifdef Q_OS_MAC
-            // Secrets live in Keychain; Settings only records presence.
-            const bool hasSaved = secret && keychainHas(envId, name);
+            // Secrets live in Keychain; Settings records only their presence
+            // (hasSavedValue), so loading never touches Keychain — values are
+            // fetched lazily, only when a request actually resolves them.
+            const bool hasSaved = secret
+                && o.value(QStringLiteral("hasSavedValue")).toBool();
             vars.append(storedVar(name, secret ? QString() : o.value(QStringLiteral("value")).toString(),
                                   secret, enabled, hasSaved));
 #else
@@ -783,6 +799,22 @@ bool ApiService::keychainHas(const QString &envId, const QString &varName) const
 #endif
 }
 
+// The stored secret value (macOS Keychain); "" when absent or off macOS.
+// Secret values are read here only — they never reach QML.
+QString ApiService::keychainGet(const QString &envId, const QString &varName) const
+{
+#ifdef Q_OS_MAC
+    QString value;
+    if (macKeychainFindPassword(keychainService(envId), varName, value))
+        return value;
+    return QString();
+#else
+    Q_UNUSED(envId);
+    Q_UNUSED(varName);
+    return QString();
+#endif
+}
+
 bool ApiService::keychainSet(const QString &envId, const QString &varName,
                              const QString &value) const
 {
@@ -815,4 +847,299 @@ int ApiService::indexOf(const QVariantList &envs, const QString &id)
             return i;
     }
     return -1;
+}
+
+// ─── Send (R6) ───────────────────────────────────────────────────────────
+
+// GUI-thread resolution of a send spec into a concrete HTTP request: {{var}}
+// substitution from the active environment in the URL (secret values straight
+// from Keychain — never from QML), enabled params appended as a query, headers
+// snapshotted, Authorization from the auth block, Content-Type inferred from
+// the body mode. The URL line mirrors qml/ApiRequestPage.qml resolvedUrl() so
+// the preview and the wire agree (secrets aside).
+QVariantMap ApiService::resolveRequest(const QVariantMap &spec) const
+{
+    QString url = spec.value(QStringLiteral("url")).toString().trimmed();
+
+    const QString envId = spec.value(QStringLiteral("envId")).toString();
+    QVariantList vars;
+    const int ei = indexOf(m_envs, envId);
+    if (ei >= 0)
+        vars = m_envs.at(ei).toMap().value(QStringLiteral("vars")).toList();
+
+    // Substitution in the URL: unresolvable keeps the placeholder (name not
+    // in the env, unset secret, Keychain miss). Plain literal replacement in
+    // variable-list order; the method, header/param names are not text fields
+    // and never resolve.
+    const auto resolve = [this, &vars, &envId](QString &text) {
+        for (const QVariant &w : vars) {
+            const QVariantMap var = w.toMap();
+            const QString name =
+                var.value(QStringLiteral("name")).toString().trimmed();
+            if (name.isEmpty())
+                continue;
+            const QString placeholder =
+                QStringLiteral("{{") + name + QStringLiteral("}}");
+            if (!text.contains(placeholder))
+                continue;
+            QString value;
+            if (var.value(QStringLiteral("secret")).toBool()) {
+                if (!var.value(QStringLiteral("hasSavedValue")).toBool())
+                    continue; // not set — leave {{name}} visible
+                value = keychainGet(envId, name);
+                if (value.isEmpty())
+                    continue; // keychain lost it — keep the placeholder
+            } else {
+                value = var.value(QStringLiteral("value")).toString();
+            }
+            text.replace(placeholder, value);
+        }
+    };
+    resolve(url);
+
+    QStringList query;
+    const QVariantList params = spec.value(QStringLiteral("params")).toList();
+    for (const QVariant &p : params) {
+        const QVariantMap pm = p.toMap();
+        if (!pm.value(QStringLiteral("enabled"), true).toBool())
+            continue;
+        const QString name = pm.value(QStringLiteral("name")).toString();
+        if (name.isEmpty())
+            continue;
+        QString value = pm.value(QStringLiteral("value")).toString();
+        query.append(name + u'=' + value);
+    }
+    if (!query.isEmpty())
+        url += (url.contains(u'?') ? QStringLiteral("&") : QStringLiteral("?"))
+               + query.join(u'&');
+
+    QVariantList headers;
+    bool hasContentType = false;
+    bool hasAuth = false;
+    const QVariantList inHeaders = spec.value(QStringLiteral("headers")).toList();
+    for (const QVariant &h : inHeaders) {
+        const QVariantMap hm = h.toMap();
+        if (!hm.value(QStringLiteral("enabled"), true).toBool())
+            continue;
+        const QString name = hm.value(QStringLiteral("name")).toString().trimmed();
+        if (name.isEmpty())
+            continue;
+        if (name.compare(QStringLiteral("content-type"), Qt::CaseInsensitive) == 0)
+            hasContentType = true;
+        if (name.compare(QStringLiteral("authorization"), Qt::CaseInsensitive) == 0)
+            hasAuth = true;
+        QString value = hm.value(QStringLiteral("value")).toString();
+        headers.append(QVariantMap{
+            {QStringLiteral("name"), name},
+            {QStringLiteral("value"), value},
+        });
+    }
+
+    const QVariantMap auth = spec.value(QStringLiteral("auth")).toMap();
+    const QString authType = auth.value(QStringLiteral("type")).toString();
+    if (!hasAuth && authType == QLatin1String("bearer")) {
+        QString token = auth.value(QStringLiteral("token")).toString();
+        if (!token.isEmpty())
+            headers.append(QVariantMap{
+                {QStringLiteral("name"), QStringLiteral("Authorization")},
+                {QStringLiteral("value"), QStringLiteral("Bearer ") + token},
+            });
+    } else if (!hasAuth && authType == QLatin1String("basic")) {
+        QString user = auth.value(QStringLiteral("username")).toString();
+        QString pass = auth.value(QStringLiteral("password")).toString();
+        const QByteArray pair = (user + u':' + pass).toUtf8().toBase64();
+        headers.append(QVariantMap{
+            {QStringLiteral("name"), QStringLiteral("Authorization")},
+            {QStringLiteral("value"), QStringLiteral("Basic ") + QString::fromLatin1(pair)},
+        });
+    }
+
+    QString bodyText = spec.value(QStringLiteral("body")).toString();
+    if (!hasContentType && !bodyText.isEmpty()) {
+        const QString mode = spec.value(QStringLiteral("bodyMode")).toString();
+        QString contentType;
+        if (mode == QLatin1String("json"))
+            contentType = QStringLiteral("application/json");
+        else if (mode == QLatin1String("form"))
+            contentType = QStringLiteral("application/x-www-form-urlencoded");
+        if (!contentType.isEmpty())
+            headers.append(QVariantMap{
+                {QStringLiteral("name"), QStringLiteral("Content-Type")},
+                {QStringLiteral("value"), contentType},
+            });
+    }
+
+    QString method = spec.value(QStringLiteral("method")).toString().trimmed().toUpper();
+    if (method.isEmpty())
+        method = QStringLiteral("GET");
+
+    QVariantMap out;
+    out.insert(QStringLiteral("url"), url);
+    out.insert(QStringLiteral("method"), method);
+    out.insert(QStringLiteral("headers"), headers);
+    out.insert(QStringLiteral("body"), bodyText);
+    out.insert(QStringLiteral("host"), QUrl(url).host());
+    return out;
+}
+
+bool ApiService::send(const QVariantMap &spec)
+{
+    ensureLoaded();
+    if (m_sending)
+        return false; // one send at a time
+
+    const QVariantMap resolved = resolveRequest(spec);
+    const QString url = resolved.value(QStringLiteral("url")).toString();
+    if (url.isEmpty()) {
+        emit errorMessage(tr("Nothing to send — the URL is empty"));
+        return false;
+    }
+
+    const QString method = resolved.value(QStringLiteral("method")).toString();
+    const QVariantList headers = resolved.value(QStringLiteral("headers")).toList();
+    const QByteArray body = resolved.value(QStringLiteral("body")).toString().toUtf8();
+    const QString host = resolved.value(QStringLiteral("host")).toString();
+
+    {
+        QMutexLocker locker(&m_sendMutex);
+        m_reply = nullptr;
+        m_cancelRequested = false;
+    }
+    m_sending = true;
+    emit sendingChanged();
+
+    // Throwaway thread + local QNAM + nested event loop (R1 design): the GUI
+    // thread never touches the network. The reply is published under the mutex
+    // before blocking and cleared before it is deleted, so a queued abort()
+    // can never reach a dangling pointer.
+    QThread *thread = QThread::create([this, url, method, headers, body, host]() {
+        QNetworkAccessManager nam;
+        QNetworkRequest request{QUrl(url)};
+        request.setTransferTimeout(kTransferTimeoutMs);
+
+        for (const QVariant &h : headers) {
+            const QVariantMap hm = h.toMap();
+            request.setRawHeader(hm.value(QStringLiteral("name")).toString().toUtf8(),
+                                 hm.value(QStringLiteral("value")).toString().toUtf8());
+        }
+
+        QElapsedTimer timer;
+        timer.start();
+        QNetworkReply *reply = nam.sendCustomRequest(request, method.toUtf8(), body);
+        {
+            QMutexLocker locker(&m_sendMutex);
+            m_reply = reply;
+        }
+
+        QEventLoop loop;
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        loop.exec();
+        const int elapsed = int(timer.elapsed());
+
+        const int errorCode = int(reply->error());
+        const QByteArray raw = reply->readAll();
+
+        QVariantList replyHeaders;
+        const QList<QNetworkReply::RawHeaderPair> pairs = reply->rawHeaderPairs();
+        for (const QNetworkReply::RawHeaderPair &pair : pairs) {
+            replyHeaders.append(QVariantMap{
+                {QStringLiteral("name"), QString::fromUtf8(pair.first)},
+                {QStringLiteral("value"), QString::fromUtf8(pair.second)},
+            });
+        }
+
+        const QVariant statusAttr =
+            reply->attribute(QNetworkRequest::HttpStatusCodeAttribute);
+        const int status = statusAttr.isValid() ? statusAttr.toInt() : 0;
+        const QString reason =
+            reply->attribute(QNetworkRequest::HttpReasonPhraseAttribute).toString();
+
+        bool canceled = false;
+        {
+            QMutexLocker locker(&m_sendMutex);
+            canceled = m_cancelRequested;
+            m_reply = nullptr;
+        }
+
+        // A 4xx/5xx is a response, not an error — and Qt maps HTTP statuses
+        // onto NetworkError (401 → AuthenticationRequiredError, 404 →
+        // ContentNotFoundError, …), so the classification keys off the
+        // status: a reply that carries one is a response whatever errorCode
+        // says. Only a transport failure (no status — a refused connection,
+        // a deadline the user did not ask for) reaches the error state.
+        const bool isResponse = status > 0;
+        QString error;
+        if (!canceled && !isResponse && errorCode != int(QNetworkReply::NoError)) {
+            switch (errorCode) {
+            case QNetworkReply::OperationCanceledError:
+                error = tr("Request timed out"); // transfer timeout, not a cancel
+                break;
+            case QNetworkReply::ConnectionRefusedError:
+                error = tr("Could not connect to the server");
+                break;
+            case QNetworkReply::HostNotFoundError:
+                error = tr("Host not found");
+                break;
+            case QNetworkReply::TimeoutError:
+                error = tr("Connection timed out");
+                break;
+            default:
+                error = reply->errorString();
+                break;
+            }
+        }
+
+        delete reply;
+
+        QVariantMap result;
+        result.insert(QStringLiteral("ok"),
+                      !canceled
+                          && (isResponse
+                              || errorCode == int(QNetworkReply::NoError)));
+        result.insert(QStringLiteral("canceled"), canceled);
+        result.insert(QStringLiteral("status"), status);
+        result.insert(QStringLiteral("reason"), reason);
+        result.insert(QStringLiteral("headers"), replyHeaders);
+        result.insert(QStringLiteral("body"), QString::fromUtf8(raw));
+        result.insert(QStringLiteral("size"), raw.size());
+        result.insert(QStringLiteral("ms"), elapsed);
+        result.insert(QStringLiteral("error"), error);
+        result.insert(QStringLiteral("errorCode"), errorCode);
+        result.insert(QStringLiteral("host"), host);
+
+        QMetaObject::invokeMethod(
+            this, [this, result]() { finishSend(result); }, Qt::QueuedConnection);
+    });
+    connect(thread, &QThread::finished, thread, &QObject::deleteLater);
+    thread->start();
+    return true;
+}
+
+void ApiService::cancel()
+{
+    if (!m_sending)
+        return;
+    QMutexLocker locker(&m_sendMutex);
+    m_cancelRequested = true;
+    if (m_reply)
+        QMetaObject::invokeMethod(m_reply, "abort", Qt::QueuedConnection);
+}
+
+void ApiService::finishSend(const QVariantMap &result)
+{
+    m_sending = false;
+    {
+        QMutexLocker locker(&m_sendMutex);
+        m_reply = nullptr;
+        m_cancelRequested = false;
+    }
+    emit sendingChanged();
+    emit sendFinished(result);
+}
+
+bool ApiService::copyToClipboard(const QString &text)
+{
+    if (QGuiApplication::clipboard())
+        QGuiApplication::clipboard()->setText(text);
+    return true;
 }

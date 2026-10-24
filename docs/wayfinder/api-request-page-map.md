@@ -72,6 +72,11 @@ save-label, body/auth modes, JSON token colors, param↔URL sync).
   suggested from method+path, project select, method/url preview, Enter/Esc),
   ⌘S / ⌘↩, "Saved ✓" flash, save-label per state, append-to-history, replay
   opens. Tests + visual pass.
+- [R8 — Per-request TLS verification off (curl -k) (task, HITL)](r8-insecure-ssl.md):
+  one request opts out of certificate verification the way `curl -k` does. The
+  flag is a saved-request field (`insecure`, false by default), the switch is a
+  `UiCheckBox` under the resolved-URL line, `-k` / `--insecure` survive curl
+  import. Tests + live TLS check.
 
 ## Decisions so far
 
@@ -107,6 +112,19 @@ save-label, body/auth modes, JSON token colors, param↔URL sync).
   dialog was pulled from R7 (suggested name, project select, method+url
   preview, Enter/Esc, Save disabled until a name); `saveRequest` returns the id
   so the page binds to the persisted row. 1 new qmltest — 42/42 green.
+- [R8 — Per-request TLS verification off](r8-insecure-ssl.md): closed. The switch
+  is a **per saved request** field (`insecure`, false by default) that is saved,
+  cloned and sent with the request — never a global preference and not a
+  per-environment policy; the checkbox reads a page-level mirror
+  (`reqRoot.insecure`) because mutating a QML-var field does not re-evaluate a
+  binding; the send worker sets `QSslSocket::VerifyNone` on the request plus an
+  `sslErrors` backstop (the redirect path rebuilds the request); `-k` /
+  `--insecure` now set the flag on curl import instead of being dropped; no new
+  Theme token and no new component, so `ui-rules.md` needs no row. Verified
+  against a local self-signed HTTPS server (unticked → handshake error, ticked →
+  200) and the flag was removed on purpose to prove the pass-through is
+  load-bearing; the layout was measured numerically (the row sits under the
+  resolved line, same left edge, no overlap with the tabs). 48/48 green.
 
 ## Not yet specified — ask before implement
 
