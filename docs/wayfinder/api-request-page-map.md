@@ -77,6 +77,11 @@ save-label, body/auth modes, JSON token colors, param↔URL sync).
   flag is a saved-request field (`insecure`, false by default), the switch is a
   `UiCheckBox` under the resolved-URL line, `-k` / `--insecure` survive curl
   import. Tests + live TLS check.
+- [R9 — `{{var}}` in every field (task, HITL)](r9-variables-everywhere.md):
+  substitution leaves the URL — enabled param values, enabled header values, the
+  auth block (Bearer token; Basic username/password, base64'd after resolving)
+  and the body. Names stay literal, unresolvable placeholders stay visible.
+  Tests.
 
 ## Decisions so far
 
@@ -125,6 +130,25 @@ save-label, body/auth modes, JSON token colors, param↔URL sync).
   200) and the flag was removed on purpose to prove the pass-through is
   load-bearing; the layout was measured numerically (the row sits under the
   resolved line, same left edge, no overlap with the tabs). 48/48 green.
+- [R7 — Save, shortcuts, history](r7-save.md): closed. The Save dialog and the
+  save-label states ("Save…" / "Save" / "Saved ✓" flash) shipped with R3 (pulled
+  forward), the history append and replay-open with R6; this ticket closed the
+  shortcuts. ⌘S → `save()` — the button's route, so a draft opens the dialog and
+  a saved request writes straight through; ⌘↩ → `startSend()`. Both are
+  `Shortcut`s declared with `sequences:` (the singular `sequence` property
+  warns: `StandardKey.Save` maps to several bindings), and both are gated on
+  `pageActive` + an open request so they cannot fire from another dashboard
+  page; ⌘↩ also stands down while sending (Cancel owns it). 49/49 green.
+- [R9 — `{{var}}` beyond the URL](r9-variables-everywhere.md): closed. One
+  resolver pass, widened from the URL to every text field the wire carries:
+  enabled param values, enabled header values, Bearer token, Basic
+  username/password (base64'd *after* resolving) and the body of every mode. The
+  method, request name, param names and header names stay literal — they are
+  identifiers, not text — and the three unresolvable cases (name not in the env,
+  secret never set, Keychain entry gone) still leave the placeholder in the
+  field. `resolveRequest` became public `Q_INVOKABLE` so the suite drives the
+  resolver directly; the "→ resolved" line still previews the URL only (the
+  other fields are drafts that resolve at send time). 49/49 green.
 
 ## Not yet specified — ask before implement
 

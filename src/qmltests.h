@@ -53,6 +53,7 @@ private slots:
     void test_api_update_request_status();
     void test_api_append_history();
     void test_api_suggest_name();
+    void test_api_resolve_vars();
     void test_api_page_list_groups();
     void test_api_page_open_request();
     void test_api_page_keys();

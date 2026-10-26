@@ -971,6 +971,7 @@ Item {
         id: requestPane
         width: parent.width
         height: parent.height
+        pageActive: apiPage.pageActive
         x: apiPage.requestOpen ? 0 : parent.width
         opacity: apiPage.requestOpen ? 1 : 0
         visible: opacity > 0

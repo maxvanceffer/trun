@@ -25,6 +25,11 @@ Item {
     // the moment a Save succeeds.
     property bool saved: false
 
+    // Set by ApiPage: the API page is the dashboard's active page. Gates the
+    // ⌘S / ⌘↩ shortcuts so they cannot fire from another page while a request
+    // stays open in the background.
+    property bool pageActive: false
+
     // The name field is the only editable surface in R3; later tickets add
     // URL, params, headers, body, auth.
     property bool dirty: false
@@ -61,6 +66,10 @@ Item {
     property int tabIndex: 0
     property string bodyMode: "none"      // none | json | form
     property string authType: "none"      // none | bearer | basic
+    // R8: per-request TLS opt-out (curl -k). Mirrored as page state because
+    // requestMap is a QML-var object — binding `checked` to requestMap.insecure
+    // would never re-evaluate after a write.
+    property bool insecure: false
 
     // Auth fields live as page state: the inputs bind to it (QML-var
     // mutation never re-evaluates, so typing is cursor-safe), the Loader
@@ -106,6 +115,26 @@ Item {
 
     signal renameOccurred()
 
+    // R7: the map's shortcuts — ⌘S saves the working request, ⌘↩ sends it.
+    // Window-context shortcuts, live only while the API page is the active
+    // dashboard page and a request is open (the host resets requestMap to null
+    // on close); save()/startSend() already no-op without a service or map.
+    // ⌘S goes through save(), not doSave(): a draft has no id yet, so the same
+    // route as the Save button (dialog for drafts, direct write when saved).
+    Shortcut {
+        objectName: "apiSaveShortcut"
+        sequences: [StandardKey.Save]
+        enabled: reqRoot.pageActive && !!reqRoot.requestMap
+        onActivated: reqRoot.save()
+    }
+
+    Shortcut {
+        objectName: "apiSendShortcut"
+        sequences: ["Ctrl+Return", "Ctrl+Enter"]
+        enabled: reqRoot.pageActive && !!reqRoot.requestMap && !reqRoot.sending
+        onActivated: reqRoot.startSend()
+    }
+
     // ApiPage hands the map over on every open; null closes the page.
     function openWith(map, wasSaved) {
         // bodyGuard keeps the textarea's restore write from marking the
@@ -113,6 +142,9 @@ Item {
         reqRoot.bodyGuard = true
         requestMap = map
         saved = wasSaved
+        // Seed the page mirror, so a reopened saved request comes back ticked
+        // (and an unticked one stays unticked — the field may be absent).
+        reqRoot.insecure = map ? map.insecure === true : false
         dirty = false
         savedFlash = false
         tabIndex = 0
@@ -425,6 +457,7 @@ Item {
             body: m.body || "",
             bodyMode: reqRoot.bodyMode,
             auth: m.auth || { type: "none" },
+            insecure: reqRoot.insecure,
             envId: reqRoot.svc ? reqRoot.svc.activeEnvId : ""
         }
     }
@@ -677,6 +710,23 @@ Item {
                         font.family: Theme.fontMono
                         font.pixelSize: Theme.fontSizeSm
                         elide: Text.ElideRight
+                    }
+
+                    // R8: per-request TLS opt-out, directly under the URL it
+                    // applies to. Shown for http too — it is a transport
+                    // switch, not a scheme hint (same as Postman/Insomnia).
+                    UiCheckBox {
+                        objectName: "apiInsecureCheck"
+                        Layout.fillWidth: true
+                        label: qsTr("Disable SSL verification")
+                        checked: reqRoot.insecure
+                        enabled: !reqRoot.sending
+                        onToggled: function (on) {
+                            reqRoot.insecure = on
+                            if (reqRoot.requestMap)
+                                reqRoot.requestMap.insecure = on
+                            reqRoot.dirty = true
+                        }
                     }
                 }
 

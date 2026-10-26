@@ -65,15 +65,19 @@ Static guess from a command's script text (e.g. `vite --port 3000` → vite:3000
 _Avoid_: autodetect, magic port
 
 **Saved request**:
-A named HTTP request stored by the API client, bound to a project via its project id (folder/manifest). Groups on the Saved requests page.
+A named HTTP request stored by the API client, bound to a project via its project id (folder/manifest). Groups on the Saved requests page. Carries its own TLS switch (`insecure`) besides the content fields.
 _Avoid_: collection item, bookmark
+
+**Insecure request**:
+A saved request that skips TLS certificate verification for itself, the way `curl -k` does. A per-request field, never an app-wide setting.
+_Avoid_: trust-all mode, disabled HTTPS
 
 **History entry**:
 One unsaved send kept in the last-50 history list. Written automatically on every Send.
 _Avoid_: log record, recent request
 
 **Environment**:
-A named global set of variables (e.g. local, staging) substituted as {{name}} into request URLs. One environment is active app-wide.
+A named global set of variables (e.g. local, staging) substituted as {{name}} into the text fields of a request — URL, param and header values, auth username/password/token, body. One environment is active app-wide.
 _Avoid_: profile, config set
 
 **Environment variable**:

@@ -15,6 +15,9 @@
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QSet>
+#include <QSslConfiguration>
+#include <QSslError>
+#include <QSslSocket>
 #include <QStringList>
 #include <QThread>
 #include <QUrl>
@@ -118,10 +121,10 @@ const QSet<QString> kLongValueFlags = {
 const QSet<QString> kLongBoolFlags = {
     QStringLiteral("compressed"), QStringLiteral("silent"),
     QStringLiteral("show-error"), QStringLiteral("location"),
-    QStringLiteral("insecure"),   QStringLiteral("include"),
-    QStringLiteral("verbose"),    QStringLiteral("netrc"),
-    QStringLiteral("fail"),       QStringLiteral("no-buffer"),
-    QStringLiteral("ftp-pasv"),   QStringLiteral("globoff"),
+    QStringLiteral("include"),    QStringLiteral("verbose"),
+    QStringLiteral("netrc"),      QStringLiteral("fail"),
+    QStringLiteral("no-buffer"),  QStringLiteral("ftp-pasv"),
+    QStringLiteral("globoff"),
 };
 // Short flags that take a value when written together: -XPOST, -H"K: V".
 const QString kShortValueFlags = QStringLiteral("XHduoAbFewT");
@@ -578,6 +581,8 @@ QVariantMap makeDraftImpl(const QString &url)
         {QStringLiteral("body"), QString()},
         {QStringLiteral("auth"),
          QVariantMap{{QStringLiteral("type"), QStringLiteral("none")}}},
+        // R8: per-request TLS opt-out (curl -k), off unless the user ticks it.
+        {QStringLiteral("insecure"), false},
         {QStringLiteral("lastStatus"), 0},
         {QStringLiteral("lastAt"), QString()},
         {QStringLiteral("updatedAt"),
@@ -629,6 +634,8 @@ QString ApiService::importCurl(const QString &command)
     bool hasBody = false;
     bool headMethod = false;
     bool getMethod = false;
+    // R8: curl -k / --insecure now has somewhere to go.
+    bool insecure = false;
 
     int i = 0;
     if (words.first() == QLatin1String("curl")
@@ -656,6 +663,10 @@ QString ApiService::importCurl(const QString &command)
             }
             if (name == QLatin1String("get")) {
                 getMethod = true;
+                continue;
+            }
+            if (name == QLatin1String("insecure")) {
+                insecure = true;
                 continue;
             }
             if (kLongBoolFlags.contains(name))
@@ -701,7 +712,11 @@ QString ApiService::importCurl(const QString &command)
                                headers, hasBody);
                 continue;
             }
-            continue; // boolean short flags, possibly combined (-sSL)
+            // Boolean short flags, possibly combined (-sSL). -k is the one
+            // that carries a request field instead of being dropped.
+            if (word.mid(1).contains(u'k'))
+                insecure = true;
+            continue;
         }
 
         if (url.isEmpty())
@@ -744,6 +759,10 @@ QString ApiService::importCurl(const QString &command)
     request.insert(QStringLiteral("headers"), headers);
     request.insert(QStringLiteral("body"), body);
     request.insert(QStringLiteral("auth"), auth);
+    // Conditional write: the draft's own `false` stays the single source of
+    // the off value.
+    if (insecure)
+        request.insert(QStringLiteral("insecure"), true);
     return addRequest(request);
 }
 
@@ -852,11 +871,15 @@ int ApiService::indexOf(const QVariantList &envs, const QString &id)
 // ─── Send (R6) ───────────────────────────────────────────────────────────
 
 // GUI-thread resolution of a send spec into a concrete HTTP request: {{var}}
-// substitution from the active environment in the URL (secret values straight
-// from Keychain — never from QML), enabled params appended as a query, headers
-// snapshotted, Authorization from the auth block, Content-Type inferred from
-// the body mode. The URL line mirrors qml/ApiRequestPage.qml resolvedUrl() so
-// the preview and the wire agree (secrets aside).
+// substitution from the active environment in every text field the wire
+// carries (URL, enabled param values, enabled header values, Bearer token,
+// Basic username/password, body — secret values straight from Keychain, never
+// from QML), enabled params appended as a query, Authorization from the auth
+// block (an explicit header wins), Content-Type inferred from the body mode,
+// and the per-request insecure flag passed through. Names (method, param and
+// header names, request name) stay literal — they are identifiers.
+// Only the URL line mirrors qml/ApiRequestPage.qml resolvedUrl(); the other
+// fields are drafts that resolve here at send time.
 QVariantMap ApiService::resolveRequest(const QVariantMap &spec) const
 {
     QString url = spec.value(QStringLiteral("url")).toString().trimmed();
@@ -867,11 +890,13 @@ QVariantMap ApiService::resolveRequest(const QVariantMap &spec) const
     if (ei >= 0)
         vars = m_envs.at(ei).toMap().value(QStringLiteral("vars")).toList();
 
-    // Substitution in the URL: unresolvable keeps the placeholder (name not
-    // in the env, unset secret, Keychain miss). Plain literal replacement in
-    // variable-list order; the method, header/param names are not text fields
-    // and never resolve.
+    // Substitution: unresolvable keeps the placeholder (name not in the env,
+    // unset secret, Keychain miss). Plain literal replacement in
+    // variable-list order; resolved lazily per field, so a secret's Keychain
+    // entry is read only when the field actually holds its placeholder.
     const auto resolve = [this, &vars, &envId](QString &text) {
+        if (text.isEmpty())
+            return;
         for (const QVariant &w : vars) {
             const QVariantMap var = w.toMap();
             const QString name =
@@ -907,6 +932,7 @@ QVariantMap ApiService::resolveRequest(const QVariantMap &spec) const
         if (name.isEmpty())
             continue;
         QString value = pm.value(QStringLiteral("value")).toString();
+        resolve(value);
         query.append(name + u'=' + value);
     }
     if (!query.isEmpty())
@@ -929,6 +955,7 @@ QVariantMap ApiService::resolveRequest(const QVariantMap &spec) const
         if (name.compare(QStringLiteral("authorization"), Qt::CaseInsensitive) == 0)
             hasAuth = true;
         QString value = hm.value(QStringLiteral("value")).toString();
+        resolve(value);
         headers.append(QVariantMap{
             {QStringLiteral("name"), name},
             {QStringLiteral("value"), value},
@@ -939,6 +966,7 @@ QVariantMap ApiService::resolveRequest(const QVariantMap &spec) const
     const QString authType = auth.value(QStringLiteral("type")).toString();
     if (!hasAuth && authType == QLatin1String("bearer")) {
         QString token = auth.value(QStringLiteral("token")).toString();
+        resolve(token);
         if (!token.isEmpty())
             headers.append(QVariantMap{
                 {QStringLiteral("name"), QStringLiteral("Authorization")},
@@ -947,6 +975,8 @@ QVariantMap ApiService::resolveRequest(const QVariantMap &spec) const
     } else if (!hasAuth && authType == QLatin1String("basic")) {
         QString user = auth.value(QStringLiteral("username")).toString();
         QString pass = auth.value(QStringLiteral("password")).toString();
+        resolve(user);
+        resolve(pass);
         const QByteArray pair = (user + u':' + pass).toUtf8().toBase64();
         headers.append(QVariantMap{
             {QStringLiteral("name"), QStringLiteral("Authorization")},
@@ -955,6 +985,7 @@ QVariantMap ApiService::resolveRequest(const QVariantMap &spec) const
     }
 
     QString bodyText = spec.value(QStringLiteral("body")).toString();
+    resolve(bodyText);
     if (!hasContentType && !bodyText.isEmpty()) {
         const QString mode = spec.value(QStringLiteral("bodyMode")).toString();
         QString contentType;
@@ -979,6 +1010,8 @@ QVariantMap ApiService::resolveRequest(const QVariantMap &spec) const
     out.insert(QStringLiteral("headers"), headers);
     out.insert(QStringLiteral("body"), bodyText);
     out.insert(QStringLiteral("host"), QUrl(url).host());
+    // R8: per-request TLS opt-out — carried, never inferred.
+    out.insert(QStringLiteral("insecure"), spec.value(QStringLiteral("insecure")).toBool());
     return out;
 }
 
@@ -999,6 +1032,8 @@ bool ApiService::send(const QVariantMap &spec)
     const QVariantList headers = resolved.value(QStringLiteral("headers")).toList();
     const QByteArray body = resolved.value(QStringLiteral("body")).toString().toUtf8();
     const QString host = resolved.value(QStringLiteral("host")).toString();
+    // R8: this request opted out of certificate verification (curl -k).
+    const bool insecure = resolved.value(QStringLiteral("insecure")).toBool();
 
     {
         QMutexLocker locker(&m_sendMutex);
@@ -1012,10 +1047,24 @@ bool ApiService::send(const QVariantMap &spec)
     // thread never touches the network. The reply is published under the mutex
     // before blocking and cleared before it is deleted, so a queued abort()
     // can never reach a dangling pointer.
-    QThread *thread = QThread::create([this, url, method, headers, body, host]() {
+    QThread *thread = QThread::create([this, url, method, headers, body, host, insecure]() {
         QNetworkAccessManager nam;
         QNetworkRequest request{QUrl(url)};
         request.setTransferTimeout(kTransferTimeoutMs);
+
+        if (insecure) {
+            // curl -k: the handshake stops checking the chain. The manager
+            // backstop covers a reply that still reports errors — notably a
+            // redirect, where Qt builds a fresh request and drops the
+            // per-request SSL configuration.
+            QObject::connect(&nam, &QNetworkAccessManager::sslErrors,
+                             [](QNetworkReply *r, const QList<QSslError> &) {
+                                 r->ignoreSslErrors();
+                             });
+            QSslConfiguration ssl = QSslConfiguration::defaultConfiguration();
+            ssl.setPeerVerifyMode(QSslSocket::VerifyNone);
+            request.setSslConfiguration(ssl);
+        }
 
         for (const QVariant &h : headers) {
             const QVariantMap hm = h.toMap();

@@ -67,6 +67,13 @@ public:
     Q_INVOKABLE void appendHistory(const QVariantMap &entry);
     // Save-dialog name suggestion "METHOD /path" (the design's save()).
     Q_INVOKABLE QString suggestName(const QString &method, const QString &url) const;
+    // GUI-thread resolution of a send spec into a concrete HTTP request:
+    // {{var}} substitution in every text field from the active environment,
+    // enabled params appended as a query, Authorization from the auth block
+    // (an explicit header wins), Content-Type inferred from the body mode and
+    // the per-request insecure flag passed through. Public so the suite can
+    // drive it directly (R9).
+    Q_INVOKABLE QVariantMap resolveRequest(const QVariantMap &spec) const;
 
     // Parses a pasted curl command into a request: -X/--request, -H/--header,
     // -d/--data, -u/--user, --url plus the boolean flags people paste along.
@@ -120,8 +127,6 @@ private:
     bool keychainDelete(const QString &envId, const QString &varName) const;
     QString keychainGet(const QString &envId, const QString &varName) const;
     static int indexOf(const QVariantList &envs, const QString &id);
-    // GUI-thread resolution of a send spec into a concrete HTTP request.
-    QVariantMap resolveRequest(const QVariantMap &spec) const;
     // GUI-thread completion of a worker run.
     void finishSend(const QVariantMap &result);
 

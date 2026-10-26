@@ -1232,6 +1232,8 @@ class FakeDockerService : public QObject {
     Q_PROPERTY(QVariantMap disk READ disk CONSTANT)
     Q_PROPERTY(QVariantMap stats READ stats CONSTANT)
     Q_PROPERTY(bool busy READ busy NOTIFY busyChanged)
+    Q_PROPERTY(bool scanning READ scanning NOTIFY scanningChanged)
+    Q_PROPERTY(QString controllingId READ controllingId NOTIFY controllingIdChanged)
 
 public:
     explicit FakeDockerService(QObject *parent = nullptr) : QObject(parent) {}
@@ -1267,7 +1269,9 @@ public:
     }
     QVariantMap disk() const { return {}; }
     QVariantMap stats() const { return {}; }
-    bool busy() const { return false; }
+    bool busy() const { return !m_controllingId.isEmpty(); }
+    bool scanning() const { return false; }
+    QString controllingId() const { return m_controllingId; }
 
     Q_INVOKABLE void refresh() {}
     Q_INVOKABLE void fetchLogs(const QString &, int) {}
@@ -1278,23 +1282,32 @@ public:
     Q_INVOKABLE bool removeImage(const QString &id)
     {
         m_removed << id;
+        // Mirror the real service: "<action>:<id>" drives the per-action
+        // loader on that row's Remove button.
+        m_controllingId = QStringLiteral("rmi:") + id;
+        emit controllingIdChanged();
         return true;
     }
     Q_INVOKABLE bool removeContainer(const QString &name)
     {
         m_removed << name;
+        m_controllingId = QStringLiteral("rm:") + name;
+        emit controllingIdChanged();
         return true;
     }
     QStringList removed() const { return m_removed; }
 
 signals:
     void busyChanged();
+    void scanningChanged();
+    void controllingIdChanged();
     void logsReady(const QString &name, const QString &logs);
     void logsError(const QString &message);
     void errorMessage(const QString &message);
 
 private:
     QStringList m_removed;
+    QString m_controllingId;
 };
 
 void QmlTests::test_docker_page_cards_span_width()
@@ -1346,9 +1359,25 @@ void QmlTests::test_docker_page_cards_span_width()
     QCOMPARE(confirmDialog->property("targetId").toString(), QString("def456"));
     QCOMPARE(confirmDialog->property("targetTitle").toString(), QString("nginx:latest"));
 
-    // Confirming hides the Remove button (pendingRemove set, service called)
+    // Confirming calls the service and marks that image as the one in flight:
+    // its own Remove button shows the loader, and `scanning` stays false so the
+    // header's Rescan icon does not spin for a mere action.
     QVERIFY(QMetaObject::invokeMethod(obj, "confirmRemove"));
-    QCOMPARE(obj->property("pendingRemove").toString(), QString("def456"));
+    QCOMPARE(obj->property("controllingId").toString(), QString("rmi:def456"));
+    // ... which lights up the loader on that image's own Remove button and on
+    // no other control. Repeater delegates are visual children only, so walk
+    // the item tree rather than the QObject tree.
+    QTest::qWait(100);
+    int loadingButtons = 0;
+    QList<QQuickItem *> queue{page};
+    while (!queue.isEmpty()) {
+        QQuickItem *item = queue.takeLast();
+        if (item->property("loading").toBool())
+            ++loadingButtons;
+        queue << item->childItems();
+    }
+    QCOMPARE(loadingButtons, 1);
+    QVERIFY(!obj->property("scanning").toBool());
     QVERIFY(docker.removed().contains(QString("def456")));
 
     delete obj;
@@ -1714,6 +1743,133 @@ void QmlTests::test_api_suggest_name()
     // Root path: just the method and a slash.
     QCOMPARE(svc.suggestName(QStringLiteral("GET"), QStringLiteral("http://localhost:8000/")),
              QStringLiteral("GET /"));
+}
+
+// R9: {{var}} resolves in every field the wire carries, not just the URL.
+// The env here has a plain var, a secret marked saved whose Keychain entry does
+// not exist (a deterministic miss — the vault is never written), and an unset
+// secret that must leave its placeholder alone.
+void QmlTests::test_api_resolve_vars()
+{
+    QTemporaryDir tmp;
+    QVERIFY(tmp.isValid());
+    Settings settings(tmp.path() + "/trun.ini");
+    settings.set(
+        QStringLiteral("api/envs"),
+        QStringLiteral(
+            R"([{"id":"r9","name":"r9","vars":[)"
+            R"({"name":"baseUrl","value":"http://localhost:8000","secret":false,"enabled":true},)"
+            R"({"name":"who","value":"alice","secret":false,"enabled":true},)"
+            R"({"name":"token","value":"","secret":true,"enabled":true,"hasSavedValue":true},)"
+            R"({"name":"unset","value":"","secret":true,"enabled":true,"hasSavedValue":false}]}])"));
+    settings.set(QStringLiteral("api/activeEnv"), QStringLiteral("r9"));
+
+    ApiService svc(&settings);
+    svc.ensureLoaded();
+    QCOMPARE(svc.activeEnvId(), QStringLiteral("r9"));
+
+    const auto row = [](const QString &name, const QString &value, bool enabled = true) {
+        return QVariantMap{{QStringLiteral("name"), name},
+                           {QStringLiteral("value"), value},
+                           {QStringLiteral("enabled"), enabled}};
+    };
+    const auto headerValue = [](const QVariantMap &resolved, const QString &name) {
+        const QVariantList list = resolved.value(QStringLiteral("headers")).toList();
+        for (const QVariant &h : list) {
+            const QVariantMap hm = h.toMap();
+            if (hm.value(QStringLiteral("name")).toString().compare(name,
+                                                                    Qt::CaseInsensitive)
+                == 0)
+                return hm.value(QStringLiteral("value")).toString();
+        }
+        return QString();
+    };
+    const auto headerCount = [](const QVariantMap &resolved, const QString &name) {
+        int count = 0;
+        const QVariantList list = resolved.value(QStringLiteral("headers")).toList();
+        for (const QVariant &h : list) {
+            const QVariantMap hm = h.toMap();
+            if (hm.value(QStringLiteral("name")).toString().compare(name,
+                                                                    Qt::CaseInsensitive)
+                == 0)
+                ++count;
+        }
+        return count;
+    };
+
+    // URL and params: values resolve, names stay literal (identifiers), a
+    // disabled row contributes nothing, and the R8 flag rides along.
+    QVariantMap spec = svc.makeDraft(QStringLiteral("{{baseUrl}}/campaigns?keep=1"));
+    spec.insert(QStringLiteral("envId"), QStringLiteral("r9"));
+    spec.insert(QStringLiteral("params"),
+                QVariantList{row(QStringLiteral("q"), QStringLiteral("{{who}}")),
+                             row(QStringLiteral("{{who}}"), QStringLiteral("x")),
+                             row(QStringLiteral("off"), QStringLiteral("{{who}}"), false)});
+    spec.insert(QStringLiteral("insecure"), true);
+    QVariantMap out = svc.resolveRequest(spec);
+    QCOMPARE(out.value(QStringLiteral("url")).toString(),
+             QStringLiteral("http://localhost:8000/campaigns?keep=1&q=alice&{{who}}=x"));
+    QCOMPARE(out.value(QStringLiteral("method")).toString(), QStringLiteral("GET"));
+    QCOMPARE(out.value(QStringLiteral("insecure")).toBool(), true);
+
+    // Header values resolve; the two secret cases keep their placeholder (no
+    // Keychain entry / never set), and an explicit Authorization header wins
+    // over the auth block — with both sides resolved.
+    QVariantMap withHeaders = svc.makeDraft(QStringLiteral("{{baseUrl}}/x"));
+    withHeaders.insert(QStringLiteral("envId"), QStringLiteral("r9"));
+    withHeaders.insert(QStringLiteral("headers"),
+                       QVariantList{row(QStringLiteral("Authorization"),
+                                        QStringLiteral("Bearer {{who}}")),
+                                    row(QStringLiteral("X-Secret"),
+                                        QStringLiteral("{{token}}")),
+                                    row(QStringLiteral("X-Unset"),
+                                        QStringLiteral("{{unset}}")),
+                                    row(QStringLiteral("X-Gone"),
+                                        QStringLiteral("{{nope}}"))});
+    withHeaders.insert(QStringLiteral("auth"),
+                       QVariantMap{{QStringLiteral("type"), QStringLiteral("bearer")},
+                                   {QStringLiteral("token"), QStringLiteral("{{token}}")}});
+    out = svc.resolveRequest(withHeaders);
+    QCOMPARE(headerValue(out, QStringLiteral("Authorization")), QStringLiteral("Bearer alice"));
+    QCOMPARE(headerCount(out, QStringLiteral("Authorization")), 1);
+    QCOMPARE(headerValue(out, QStringLiteral("X-Secret")), QStringLiteral("{{token}}"));
+    QCOMPARE(headerValue(out, QStringLiteral("X-Unset")), QStringLiteral("{{unset}}"));
+    QCOMPARE(headerValue(out, QStringLiteral("X-Gone")), QStringLiteral("{{nope}}"));
+
+    // Bearer token from the Auth tab resolves when no header row overrides it.
+    QVariantMap bearer = svc.makeDraft(QStringLiteral("{{baseUrl}}/x"));
+    bearer.insert(QStringLiteral("envId"), QStringLiteral("r9"));
+    bearer.insert(QStringLiteral("auth"),
+                  QVariantMap{{QStringLiteral("type"), QStringLiteral("bearer")},
+                              {QStringLiteral("token"), QStringLiteral("{{who}}")}});
+    QCOMPARE(headerValue(svc.resolveRequest(bearer), QStringLiteral("Authorization")),
+             QStringLiteral("Bearer alice"));
+
+    // Basic still base64s the *resolved* pair.
+    QVariantMap basic = svc.makeDraft(QStringLiteral("{{baseUrl}}/x"));
+    basic.insert(QStringLiteral("envId"), QStringLiteral("r9"));
+    basic.insert(QStringLiteral("auth"),
+                 QVariantMap{{QStringLiteral("type"), QStringLiteral("basic")},
+                             {QStringLiteral("username"), QStringLiteral("{{who}}")},
+                             {QStringLiteral("password"), QStringLiteral("pw-{{who}}")}});
+    QCOMPARE(headerValue(svc.resolveRequest(basic), QStringLiteral("Authorization")),
+             QStringLiteral("Basic ")
+                 + QString::fromLatin1(QByteArray("alice:pw-alice").toBase64()));
+
+    // Body (all modes) resolves too; the unresolved secret stays a placeholder.
+    QVariantMap body = svc.makeDraft(QStringLiteral("{{baseUrl}}/x"));
+    body.insert(QStringLiteral("envId"), QStringLiteral("r9"));
+    body.insert(QStringLiteral("method"), QStringLiteral("POST"));
+    body.insert(QStringLiteral("bodyMode"), QStringLiteral("json"));
+    body.insert(QStringLiteral("body"),
+                QStringLiteral("{\"who\":\"{{who}}\",\"token\":\"{{token}}\","
+                               "\"gone\":\"{{nope}}\"}"));
+    out = svc.resolveRequest(body);
+    QCOMPARE(out.value(QStringLiteral("body")).toString(),
+             QStringLiteral("{\"who\":\"alice\",\"token\":\"{{token}}\","
+                            "\"gone\":\"{{nope}}\"}"));
+    QCOMPARE(headerValue(out, QStringLiteral("Content-Type")),
+             QStringLiteral("application/json"));
 }
 
 // Fakes for the ApiPage list test: only the surfaces the page reads.
@@ -2471,6 +2627,48 @@ void QmlTests::test_api_request_urlbar()
     QTest::qWait(20);
     QCOMPARE(pane->property("insecure").toBool(), false);
     QCOMPARE(insecureCheck->property("checked").toBool(), false);
+
+    // R7 — ⌘S saves, ⌘↩ sends. Both are window shortcuts, so they are gated
+    // twice: the API page must be the dashboard's active page (pageActive,
+    // handed down by ApiPage) and a request must be open. The first is what
+    // keeps ⌘S from saving a background request while the user is on Docker.
+    auto *saveShortcut = pane->findChild<QObject *>(QStringLiteral("apiSaveShortcut"));
+    QVERIFY(saveShortcut);
+    auto *sendShortcut = pane->findChild<QObject *>(QStringLiteral("apiSendShortcut"));
+    QVERIFY(sendShortcut);
+    QCOMPARE(saveShortcut->property("enabled").toBool(), false);
+    QCOMPARE(sendShortcut->property("enabled").toBool(), false);
+
+    pane->setProperty("pageActive", true);
+    QTest::qWait(20);
+    QCOMPARE(saveShortcut->property("enabled").toBool(), true);
+    QCOMPARE(sendShortcut->property("enabled").toBool(), true);
+
+    // An in-flight send leaves ⌘↩ to the Cancel button; ⌘S stays available.
+    // Emitting the shortcut signals is how QML sees a key press: activated is
+    // wired to save()/startSend(), so this also proves the handlers, not just
+    // the enable gates.
+    pane->setProperty("dirty", true);
+    QVERIFY(QMetaObject::invokeMethod(saveShortcut, "activated"));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("dirty").toBool(), false);
+
+    QVERIFY(QMetaObject::invokeMethod(sendShortcut, "activated"));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("sending").toBool(), true);
+    QCOMPARE(sendShortcut->property("enabled").toBool(), false);
+    QCOMPARE(saveShortcut->property("enabled").toBool(), true);
+    QVERIFY(QMetaObject::invokeMethod(pane, "cancelSend"));
+    QTest::qWait(20);
+    QCOMPARE(pane->property("sending").toBool(), false);
+    QCOMPARE(sendShortcut->property("enabled").toBool(), true);
+
+    // Closing the request drops requestMap, so neither fires on a dead page.
+    QVERIFY(QMetaObject::invokeMethod(pane, "openWith", Q_ARG(QVariant, QVariant()),
+                                      Q_ARG(QVariant, false)));
+    QTest::qWait(20);
+    QCOMPARE(saveShortcut->property("enabled").toBool(), false);
+    QCOMPARE(sendShortcut->property("enabled").toBool(), false);
 
     delete obj;
 }
