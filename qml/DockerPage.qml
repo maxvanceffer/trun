@@ -19,14 +19,30 @@ Item {
     readonly property var images: svc ? svc.images : []
     readonly property var disk: svc ? svc.disk : ({})
     readonly property var liveStats: svc ? svc.stats : ({})
+    // Any operation in flight: refresh() or a single action. Gates all the
+    // controls so a second action cannot be started on top of the first.
     readonly property bool busy: svc ? svc.busy : false
+    // Full rescan only — the Rescan spinner follows this and nothing else.
+    // A single action (start/stop/remove/prune) must not spin it.
+    readonly property bool scanning: svc ? svc.scanning : false
+    // What is in flight — "<action>:<id>" ("start:web", "rmi:def456",
+    // "restart:group:shop"), or "engine" / "prune". Exactly one control shows
+    // a per-action loader; the header's Rescan icon never reacts to it.
+    readonly property string controllingId: svc ? svc.controllingId : ""
+    // Container actions need a reachable daemon.
+    readonly property bool engineUp: !!(engine && engine.available)
 
     // Set by Dashboard: stats poll only while the page is visible.
     property bool pageActive: false
     property string openLogsFor: ""
     property string logsText: ""
-    // Id (image id or container name) whose removal is in flight.
-    property string pendingRemove: ""
+
+    // True when this very action on this id is the one in flight, so only its
+    // own control shows the loader (two buttons on one row both keyed by a
+    // container name would spin together otherwise).
+    function inFlight(action, id) {
+        return dockerPage.controllingId === action + ":" + id
+    }
 
     function askRemove(kind, id, title) {
         confirmDialog.targetKind = kind
@@ -41,7 +57,6 @@ Item {
         confirmDialog.close()
         if (!dockerPage.svc || id === "")
             return
-        dockerPage.pendingRemove = id
         if (kind === "image")
             dockerPage.svc.removeImage(id)
         else
@@ -175,9 +190,9 @@ Item {
         return out
     }
 
-    function groupControl(list, action) {
-        if (dockerPage.svc && !dockerPage.busy && dockerPage.pendingRemove === "")
-            dockerPage.svc.controlGroup(dockerPage.groupNames(list), action)
+    function groupControl(list, action, project) {
+        if (dockerPage.svc && !dockerPage.busy)
+            dockerPage.svc.controlGroup(dockerPage.groupNames(list), action, project)
     }
 
     // First published host port ("0.0.0.0:9000->9000/tcp" -> 9000), else 0.
@@ -205,14 +220,7 @@ Item {
             dockerPage.lm.add("error", "docker", message)
         }
         function onErrorMessage(message) {
-            dockerPage.pendingRemove = ""
             dockerPage.lm.add("error", "docker", message)
-        }
-        function onContainersChanged() {
-            dockerPage.pendingRemove = ""
-        }
-        function onImagesChanged() {
-            dockerPage.pendingRemove = ""
         }
     }
 
@@ -383,10 +391,14 @@ Item {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        enabled: dockerPage.pendingRemove === ""
+                        // Only one operation at a time: a rescan cannot start
+                        // while an action runs, and vice versa.
+                        enabled: !dockerPage.busy
                         onClicked: dockerPage.reload()
                     }
 
+                    // Full rescan only. Actions (start/stop/remove/prune) show
+                    // their own loader on the button instead of spinning this.
                     NumberAnimation {
                         id: spin
                         target: rescanIcon
@@ -396,7 +408,7 @@ Item {
                         duration: 900
                         easing.type: Easing.Linear
                         onFinished: {
-                            if (dockerPage.busy) {
+                            if (dockerPage.scanning) {
                                 rescanIcon.rotation = 0
                                 spin.start()
                             } else {
@@ -407,8 +419,8 @@ Item {
 
                     Connections {
                         target: dockerPage.svc
-                        function onBusyChanged() {
-                            if (dockerPage.busy && !spin.running) {
+                        function onScanningChanged() {
+                            if (dockerPage.scanning && !spin.running) {
                                 rescanIcon.rotation = 0
                                 spin.start()
                             }
@@ -492,7 +504,9 @@ Item {
                             Layout.preferredWidth: 88
                             visible: dockerPage.engine && dockerPage.engine.colimaInstalled === true
                             enabled: dockerPage.svc && !dockerPage.busy
-                                && dockerPage.pendingRemove === ""
+                            // Engine start/stop: the loader lives in this button
+                            // (colima start/stop can take up to two minutes).
+                            loading: dockerPage.controllingId === "engine"
                             label: (dockerPage.engine && dockerPage.engine.colimaRunning) ? qsTr("Stop") : qsTr("Start")
                             color: "secondary"
                             variant: "outline"
@@ -512,7 +526,7 @@ Item {
                             Layout.preferredWidth: 88
                             visible: dockerPage.engine && dockerPage.engine.available === true
                             enabled: dockerPage.svc && !dockerPage.busy
-                                && dockerPage.pendingRemove === ""
+                            loading: dockerPage.controllingId === "prune"
                             label: qsTr("Prune")
                             color: "secondary"
                             variant: "outline"
@@ -544,7 +558,7 @@ Item {
 
             Label {
                 visible: dockerPage.containers.length === 0
-                text: (dockerPage.svc && dockerPage.svc.busy)
+                text: dockerPage.scanning
                     ? qsTr("Scanning…") : qsTr("No containers")
                 color: Theme.textMuted
                 font.pixelSize: Theme.fontSizeMd
@@ -642,8 +656,14 @@ Item {
                             UiButton {
                                 Layout.alignment: Qt.AlignVCenter
                                 Layout.preferredWidth: 76
+                                // Also false while any other action runs — e.g.
+                                // stopping the engine disables every container
+                                // action for the duration.
                                 enabled: dockerPage.svc && !dockerPage.busy
-                                    && dockerPage.pendingRemove === ""
+                                    && dockerPage.engineUp
+                                loading: containerCard.modelData.running
+                                    ? dockerPage.inFlight("stop", containerCard.modelData.name)
+                                    : dockerPage.inFlight("start", containerCard.modelData.name)
                                 label: containerCard.modelData.running ? qsTr("Stop") : qsTr("Start")
                                 color: "secondary"
                                 variant: "outline"
@@ -681,7 +701,7 @@ Item {
                                 Layout.alignment: Qt.AlignVCenter
                                 Layout.preferredWidth: 88
                                 enabled: dockerPage.svc && !dockerPage.busy
-                                    && dockerPage.pendingRemove === ""
+                                loading: dockerPage.inFlight("restart", containerCard.modelData.name)
                                 label: qsTr("Restart")
                                 color: "secondary"
                                 variant: "outline"
@@ -690,26 +710,16 @@ Item {
                             }
 
                             UiButton {
-                                visible: dockerPage.pendingRemove !== containerCard.modelData.name
                                 Layout.alignment: Qt.AlignVCenter
                                 Layout.preferredWidth: 88
                                 enabled: dockerPage.svc && !dockerPage.busy
-                                    && dockerPage.pendingRemove === ""
+                                loading: dockerPage.inFlight("rm", containerCard.modelData.name)
                                 label: qsTr("Remove")
                                 color: "error"
                                 variant: "outline"
                                 size: "sm"
                                 onClicked: dockerPage.askRemove("container",
                                     containerCard.modelData.name, containerCard.modelData.name)
-                            }
-
-                            BusyLabel {
-                                visible: dockerPage.pendingRemove === containerCard.modelData.name
-                                Layout.alignment: Qt.AlignVCenter
-                                Layout.preferredWidth: 88
-                                Layout.preferredHeight: 30
-                                layout: "horizontal"
-                                text: qsTr("Removing")
                             }
                         }
 
@@ -769,20 +779,18 @@ Item {
                             font.pixelSize: Theme.fontSizeSm
                         }
 
-                        Label {
+                        UiButton {
                             Layout.alignment: Qt.AlignVCenter
-                            text: qsTr("Start all")
-                            color: Theme.textMuted
-                            font.pixelSize: Theme.fontSizeSm
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                enabled: dockerPage.svc && !dockerPage.busy
-                                    && dockerPage.pendingRemove === ""
-                                onClicked: dockerPage.groupControl(
-                                    dockerPage.containersOf(groupBlock.modelData), "start")
-                            }
+                            enabled: dockerPage.svc && !dockerPage.busy
+                            loading: dockerPage.inFlight("start",
+                                "group:" + groupBlock.modelData)
+                            label: qsTr("Start all")
+                            color: "neutral"
+                            variant: "link"
+                            size: "sm"
+                            onClicked: dockerPage.groupControl(
+                                dockerPage.containersOf(groupBlock.modelData), "start",
+                                groupBlock.modelData)
                         }
 
                         Label {
@@ -792,20 +800,18 @@ Item {
                             font.pixelSize: Theme.fontSizeSm
                         }
 
-                        Label {
+                        UiButton {
                             Layout.alignment: Qt.AlignVCenter
-                            text: qsTr("Stop")
-                            color: Theme.textMuted
-                            font.pixelSize: Theme.fontSizeSm
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                enabled: dockerPage.svc && !dockerPage.busy
-                                    && dockerPage.pendingRemove === ""
-                                onClicked: dockerPage.groupControl(
-                                    dockerPage.containersOf(groupBlock.modelData), "stop")
-                            }
+                            enabled: dockerPage.svc && !dockerPage.busy
+                            loading: dockerPage.inFlight("stop",
+                                "group:" + groupBlock.modelData)
+                            label: qsTr("Stop")
+                            color: "neutral"
+                            variant: "link"
+                            size: "sm"
+                            onClicked: dockerPage.groupControl(
+                                dockerPage.containersOf(groupBlock.modelData), "stop",
+                                groupBlock.modelData)
                         }
 
                         Label {
@@ -815,20 +821,18 @@ Item {
                             font.pixelSize: Theme.fontSizeSm
                         }
 
-                        Label {
+                        UiButton {
                             Layout.alignment: Qt.AlignVCenter
-                            text: qsTr("Restart")
-                            color: Theme.textMuted
-                            font.pixelSize: Theme.fontSizeSm
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                enabled: dockerPage.svc && !dockerPage.busy
-                                    && dockerPage.pendingRemove === ""
-                                onClicked: dockerPage.groupControl(
-                                    dockerPage.containersOf(groupBlock.modelData), "restart")
-                            }
+                            enabled: dockerPage.svc && !dockerPage.busy
+                            loading: dockerPage.inFlight("restart",
+                                "group:" + groupBlock.modelData)
+                            label: qsTr("Restart")
+                            color: "neutral"
+                            variant: "link"
+                            size: "sm"
+                            onClicked: dockerPage.groupControl(
+                                dockerPage.containersOf(groupBlock.modelData), "restart",
+                                groupBlock.modelData)
                         }
                     }
 
@@ -862,7 +866,7 @@ Item {
 
             Label {
                 visible: dockerPage.images.length === 0
-                text: (dockerPage.svc && dockerPage.svc.busy)
+                text: dockerPage.scanning
                     ? qsTr("Scanning…") : qsTr("No images")
                 color: Theme.textMuted
                 font.pixelSize: Theme.fontSizeMd
@@ -905,26 +909,16 @@ Item {
                         }
 
                         UiButton {
-                            visible: dockerPage.pendingRemove !== imageCard.modelData.id
                             Layout.alignment: Qt.AlignVCenter
                             Layout.preferredWidth: 88
                             enabled: dockerPage.svc && !dockerPage.busy
-                                && dockerPage.pendingRemove === ""
+                            loading: dockerPage.inFlight("rmi", imageCard.modelData.id)
                             label: qsTr("Remove")
                             color: "error"
                             variant: "outline"
                             size: "sm"
                             onClicked: dockerPage.askRemove("image", imageCard.modelData.id,
                                 dockerPage.imageTitle(imageCard.modelData))
-                        }
-
-                        BusyLabel {
-                            visible: dockerPage.pendingRemove === imageCard.modelData.id
-                            Layout.alignment: Qt.AlignVCenter
-                            Layout.preferredWidth: 88
-                            Layout.preferredHeight: 30
-                            layout: "horizontal"
-                            text: qsTr("Removing")
                         }
                     }
                 }

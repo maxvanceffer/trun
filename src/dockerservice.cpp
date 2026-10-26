@@ -280,7 +280,9 @@ void DockerService::refresh()
     if (m_busy)
         return;
     m_busy = true;
+    m_scanning = true;
     emit busyChanged();
+    emit scanningChanged();
 
     QThread *thread = QThread::create([this]() {
         const QVariantMap engine = queryEngine();
@@ -299,7 +301,9 @@ void DockerService::refresh()
             [this, engine, containers, psOk, images, imgOk, disk, dfOk, error]() {
                 applyScan(engine, containers, psOk, images, imgOk, disk, dfOk, error);
                 m_busy = false;
+                m_scanning = false;
                 emit busyChanged();
+                emit scanningChanged();
             },
             Qt::QueuedConnection);
     });
@@ -307,15 +311,31 @@ void DockerService::refresh()
     thread->start();
 }
 
-bool DockerService::control(const QStringList &args, bool quiet)
+bool DockerService::beginOp(const QString &target)
 {
     if (m_busy)
         return false;
     m_busy = true;
-    if (!quiet)
-        emit busyChanged();
+    m_controllingId = target;
+    emit busyChanged();
+    emit controllingIdChanged();
+    return true;
+}
 
-    QThread *thread = QThread::create([this, args, quiet]() {
+void DockerService::endOp()
+{
+    m_busy = false;
+    m_controllingId.clear();
+    emit busyChanged();
+    emit controllingIdChanged();
+}
+
+bool DockerService::control(const QStringList &args, const QString &target)
+{
+    if (!beginOp(target))
+        return false;
+
+    QThread *thread = QThread::create([this, args]() {
         QString error;
         if (!runOk(QStringLiteral("docker"), args))
             error = QStringLiteral("docker ") + args.join(QLatin1Char(' ')) + QStringLiteral(" failed");
@@ -329,11 +349,9 @@ bool DockerService::control(const QStringList &args, bool quiet)
             error = QStringLiteral("docker answered slowly — showing cached data, Rescan to retry");
         QMetaObject::invokeMethod(
             this,
-            [this, engine, containers, psOk, images, imgOk, disk, dfOk, error, quiet]() {
+            [this, engine, containers, psOk, images, imgOk, disk, dfOk, error]() {
                 applyScan(engine, containers, psOk, images, imgOk, disk, dfOk, error);
-                m_busy = false;
-                if (!quiet)
-                    emit busyChanged();
+                endOp();
             },
             Qt::QueuedConnection);
     });
@@ -344,25 +362,27 @@ bool DockerService::control(const QStringList &args, bool quiet)
 
 bool DockerService::startContainer(const QString &name)
 {
-    return control({QStringLiteral("start"), name});
+    return control({QStringLiteral("start"), name}, QStringLiteral("start:") + name);
 }
 
 bool DockerService::stopContainer(const QString &name)
 {
-    return control({QStringLiteral("stop"), name});
+    return control({QStringLiteral("stop"), name}, QStringLiteral("stop:") + name);
 }
 
 bool DockerService::restartContainer(const QString &name)
 {
-    return control({QStringLiteral("restart"), name});
+    return control({QStringLiteral("restart"), name}, QStringLiteral("restart:") + name);
 }
 
 bool DockerService::removeContainer(const QString &name)
 {
-    return control({QStringLiteral("rm"), QStringLiteral("-f"), name});
+    return control({QStringLiteral("rm"), QStringLiteral("-f"), name},
+                   QStringLiteral("rm:") + name);
 }
 
-bool DockerService::controlGroup(const QStringList &names, const QString &action)
+bool DockerService::controlGroup(const QStringList &names, const QString &action,
+                                 const QString &project)
 {
     if (names.isEmpty())
         return false;
@@ -371,18 +391,20 @@ bool DockerService::controlGroup(const QStringList &names, const QString &action
         return false;
     QStringList args{action};
     args << names;
-    return control(args);
+    // "start:group:<project>": each of the group's controls (Start all / Stop /
+    // Restart) is a separate action, so only the pressed one shows the loader.
+    return control(args, action + QStringLiteral(":group:") + project);
 }
 
 bool DockerService::removeImage(const QString &id)
 {
-    // Quiet: per-item Removing indicator instead of the global spinner.
-    return control({QStringLiteral("rmi"), id}, true);
+    return control({QStringLiteral("rmi"), id}, QStringLiteral("rmi:") + id);
 }
 
 bool DockerService::prune()
 {
-    return control({QStringLiteral("system"), QStringLiteral("prune"), QStringLiteral("-f")});
+    return control({QStringLiteral("system"), QStringLiteral("prune"), QStringLiteral("-f")},
+                   QStringLiteral("prune"));
 }
 
 bool DockerService::startEngine()
@@ -394,10 +416,8 @@ bool DockerService::startEngine()
         emit errorMessage(QStringLiteral("No CLI start for this runtime — launch Docker Desktop / OrbStack manually"));
         return false;
     }
-    if (m_busy)
+    if (!beginOp(QStringLiteral("engine")))
         return false;
-    m_busy = true;
-    emit busyChanged();
     QThread *thread = QThread::create([this]() {
         QString error;
         if (!runOk(QStringLiteral("colima"), {QStringLiteral("start")}, 120000))
@@ -414,8 +434,7 @@ bool DockerService::startEngine()
             this,
             [this, engine, containers, psOk, images, imgOk, disk, dfOk, error]() {
                 applyScan(engine, containers, psOk, images, imgOk, disk, dfOk, error);
-                m_busy = false;
-                emit busyChanged();
+                endOp();
             },
             Qt::QueuedConnection);
     });
@@ -431,10 +450,8 @@ bool DockerService::stopEngine()
         emit errorMessage(QStringLiteral("No CLI stop for this runtime"));
         return false;
     }
-    if (m_busy)
+    if (!beginOp(QStringLiteral("engine")))
         return false;
-    m_busy = true;
-    emit busyChanged();
     QThread *thread = QThread::create([this]() {
         QString error;
         if (!runOk(QStringLiteral("colima"), {QStringLiteral("stop")}, 120000))
@@ -448,8 +465,6 @@ bool DockerService::stopEngine()
                 m_images = QVariantList{};
                 m_disk = QVariantMap{};
                 m_stats = QVariantMap{};
-                m_busy = false;
-                emit busyChanged();
                 emit engineChanged();
                 emit containersChanged();
                 emit imagesChanged();
@@ -457,6 +472,7 @@ bool DockerService::stopEngine()
                 emit statsChanged();
                 if (!error.isEmpty())
                     emit errorMessage(error);
+                endOp();
             },
             Qt::QueuedConnection);
     });
